@@ -77,6 +77,12 @@ struct LedgerSleepView: View {
     /// other rows recede — the board's stage-highlight behaviour, display-only selection state.
     @State private var highlightedStage: Ledger.Stage?
 
+    /// Night browsing (the classic tab's ◀/▶, as a swipe): 0 = the latest night, +1 per swipe left.
+    @State private var nightOffset = 0
+    /// The decoded navigated night (nil at offset 0 — the model's own night is the hero then).
+    /// Decoded in the offset handler, never in `body`.
+    @State private var navNight: Night?
+
     init() {}
 
     // MARK: - Body
@@ -94,6 +100,10 @@ struct LedgerSleepView: View {
 
         return scroller(resolved)
             .background(Ledger.bgScreen.ignoresSafeArea())
+            // Night swipe — the SCREEN, not the ScrollView, for the same recognizer-priority reason
+            // the Today day-swipe sits one level out: attached to the scroll view it fights the
+            // vertical pan and gentle scrolls lose.
+            .simultaneousGesture(nightSwipeGesture)
             .ledgerMotionGate()
             .onChangeCompat(of: key) { newKey in
                 modelKey = newKey
@@ -578,7 +588,8 @@ struct LedgerSleepView: View {
                                     days: repo.days,
                                     sleeps: repo.sleeps,
                                     importedSleep: repo.importedSleep,
-                                    todayEfficiency: repo.today?.efficiency)
+                                    todayEfficiency: repo.today?.efficiency,
+                                    nightOverride: navNight)
         }
     }
 
@@ -587,13 +598,42 @@ struct LedgerSleepView: View {
     private func rebuild() {
         let built = buildModel()
         model = built
+        nightOffset = 0
+        navNight = nil
         render = buildRender(built)
+        highlightedStage = nil
+    }
+
+    /// The night the screen is currently showing — the navigated one, else the model's latest.
+    private var displayedNight: Night? { navNight ?? model?.night }
+
+    /// Swipe left = one night OLDER, swipe right = newer, clamped to the browsable groups. The same
+    /// thresholds as the Today day-swipe, so the two gestures feel identical.
+    private var nightSwipeGesture: some Gesture {
+        DragGesture(minimumDistance: 24)
+            .onEnded { value in
+                let dx = value.translation.width, dy = value.translation.height
+                guard abs(dx) > abs(dy) * 1.5, abs(dx) > 50 else { return }
+                step(dx < 0 ? 1 : -1)
+            }
+    }
+
+    private func step(_ delta: Int) {
+        let navSessions = allSessions.isEmpty ? repo.sleeps : allSessions
+        let groups = SleepModel.navDays(navSessions: navSessions)
+        let next = min(max(0, nightOffset + delta), max(0, groups.count - 1))
+        guard next != nightOffset else { return }
+        nightOffset = next
+        navNight = next == 0 ? nil : SleepModel.decodedNight(at: next, navDays: groups,
+                                                             habitualMidsleepSec: habitualMidsleepSec,
+                                                             motionByStart: motionByStart)
+        render = buildRender()
         highlightedStage = nil
     }
 
     /// The night the HR overlay belongs to. `0` while there is no night, which keeps the `.task`
     /// from firing against a half-built model.
-    private var hrTaskKey: Int { model?.night.session.startTs ?? 0 }
+    private var hrTaskKey: Int { displayedNight?.session.startTs ?? 0 }
 
     /// Load the displayed night's 1-minute sleeping-HR buckets and map them into the hypnogram's
     /// seconds-from-onset domain. The window filter is the classic chart's, verbatim
@@ -603,20 +643,20 @@ struct LedgerSleepView: View {
     /// No confidence filtering: with the shipped acceptance floor no stored PPG sample carries
     /// `conf < 0.3`, so every bucket in the store is a measured reading.
     private func loadNightHR() async {
-        guard let model,
-              model.night.session.endTs > model.night.session.effectiveStartTs else {
+        guard let night = displayedNight,
+              night.session.endTs > night.session.effectiveStartTs else {
             hrPoints = []
             return
         }
-        let buckets = await repo.hrBuckets(from: model.night.session.effectiveStartTs,
-                                           to: model.night.session.endTs,
+        let buckets = await repo.hrBuckets(from: night.session.effectiveStartTs,
+                                           to: night.session.endTs,
                                            bucketSeconds: 60)
-        let intervals = render?.intervals ?? LedgerSleepRender.smoothed(model.intervals)
+        let intervals = render?.intervals ?? LedgerSleepRender.smoothed(night.intervals)
         guard let span = intervals.map(\.end).max(), span > 0 else {
             hrPoints = []
             return
         }
-        let nightStartTs = model.night.onsetDate.timeIntervalSince1970
+        let nightStartTs = night.onsetDate.timeIntervalSince1970
         hrPoints = buckets.compactMap { bucket in
             let rel = TimeInterval(bucket.ts) - nightStartTs
             guard rel >= -60, rel <= span + 60 else { return nil }
@@ -765,9 +805,13 @@ private struct LedgerSleepRender {
         days: [DailyMetric],
         sleeps: [CachedSleepSession],
         importedSleep: [String: ImportedSleepFigures],
-        todayEfficiency: Double?
+        todayEfficiency: Double?,
+        nightOverride: Night? = nil
     ) -> LedgerSleepRender {
-        let night = model.night
+        // Night browsing (the ◀/▶ the classic tab has): an override swaps every NIGHT-SCOPED
+        // section — header span, score, stat strip, timeline, stages — onto the navigated night,
+        // while the whole-history sections (debt, rhythm, consistency) stay put. nil = latest.
+        let night = nightOverride ?? model.night
         let stages = night.stages
         let ledger = model.sleepDebtLedger
 
@@ -875,7 +919,7 @@ private struct LedgerSleepRender {
             debtCaption: ledger.nightCount > 0
                 ? String(localized: "debt · \(ledger.nightCount)n")
                 : String(localized: "debt"),
-            intervals: smoothed(model.intervals),
+            intervals: smoothed(nightOverride?.intervals ?? model.intervals),
             nightStart: night.onsetDate,
             stageRows: rows,
             restorativeValue: restorativeValue,

@@ -135,6 +135,8 @@ struct RootTabView: View {
             .onEnded { v in
                 // Today (tab 0) uses horizontal swipe to change DAYS, so tab-swipe is off there.
                 guard selectedTab != 0 else { return }
+                // The Ledger Sleep tab (tab 1) uses horizontal swipe to browse NIGHTS — same carve-out.
+                guard !(ledgerUIEnabled && selectedTab == 1) else { return }
                 let dx = v.translation.width, dy = v.translation.height
                 guard abs(dx) > 60, abs(dx) > abs(dy) * 1.6 else { return }
                 // Clamp to the ACTIVE shell's last tab, not a literal 3: the Aurora shell has five
@@ -212,7 +214,7 @@ struct RootTabView: View {
         // stack (whose environment it inherits), but it hosts the CLASSIC hub, so its metric pushes
         // must open the classic detail.
         .environment(\.ledgerOverflowContent, AnyView(
-            moreTab(path: $ledgerOverflowPath, scrollSignal: 0)
+            ledgerOverflowTab()
                 .environment(\.ledgerShellActive, false)
         ))
         // Spec §Tap Map routes some Today taps to a TAB ("last-night strip → Sleep tab"); only this
@@ -661,6 +663,86 @@ struct RootTabView: View {
         .tabItem { Label("More", systemImage: "ellipsis") }
     }
 
+    /// The Ledger shell's "…" overflow hub: the SAME 28 destinations as the classic More tab —
+    /// mirrored row for row, pushing the same `MoreDestination` VALUES through the same
+    /// `navigationDestination` wrapper, so nothing can drift — restyled into the Ledger's section
+    /// grammar (dark canvas, overline group headers, hairline rows, no cards). The pushed screens
+    /// themselves stay classic; only the index speaks Ledger.
+    private func ledgerOverflowTab() -> some View {
+        NavigationStack(path: $ledgerOverflowPath) {
+            ScrollView {
+                VStack(alignment: .leading, spacing: 0) {
+                    LedgerHeader(overline: String(localized: "Everything else"),
+                                 title: String(localized: "More")) { EmptyView() }
+                        .padding(.top, 18)
+
+                    ledgerMoreSection(String(localized: "Insights"), first: true) {
+                        LedgerMoreRow("What Moves You", "wand.and.sparkles", .insightsHub)
+                        LedgerMoreRow("Intelligence", "brain.head.profile", .intelligence)
+                        LedgerMoreRow("Coach", "sparkles", .coach)
+                        LedgerMoreRow("Insights", "lightbulb", .insights)
+                        LedgerMoreRow("Explore", "square.grid.2x2", .explore)
+                        LedgerMoreRow("Compare", "rectangle.split.2x1", .compare)
+                    }
+                    ledgerMoreSection(String(localized: "Body")) {
+                        LedgerMoreRow("Live", "waveform.path.ecg", .live)
+                        LedgerMoreRow("Workouts", "figure.run", .workouts)
+                        LedgerMoreRow("Health", "heart.text.square", .health)
+                        LedgerMoreRow("Lab Book", "books.vertical", .labBook)
+                        LedgerMoreRow("Stress", "bolt.heart", .stress)
+                        LedgerMoreRow("Breathe", "wind", .breathe)
+                        LedgerMoreRow("Intervals", "timer", .intervals)
+                        LedgerMoreRow("Rhythm", "waveform.path", .rhythm)
+                    }
+                    ledgerMoreSection(String(localized: "Data")) {
+                        LedgerMoreRow("Your Data, Fused", "square.stack.3d.up", .fusedRecord)
+                        LedgerMoreRow("Apple Health", "heart", .appleHealth)
+                        LedgerMoreRow("Mi Band", "figure.walk.motion", .miBand)
+                        LedgerMoreRow("Data Sources", "externaldrive", .dataSources)
+                        LedgerMoreRow("Backup & Sync", "externaldrive.badge.icloud", .backupSync)
+                        LedgerMoreRow("Shortcuts Export", "square.and.arrow.up", .shortcutsExport)
+                        LedgerMoreRow("NOOP Limitations", "list.bullet.rectangle", .noopLimitations)
+                    }
+                    ledgerMoreSection(String(localized: "App")) {
+                        LedgerMoreRow("Alarms", "alarm", .alarms)
+                        LedgerMoreRow("Automations", "wand.and.stars", .automations)
+                        LedgerMoreRow("Test Centre", "stethoscope", .testCentre)
+                        LedgerMoreRow("Siri & Shortcuts", "mic", .siriShortcuts)
+                        LedgerMoreRow("Power saving", "battery.25", .powerSaving)
+                        LedgerMoreRow("Settings", "gearshape", .settings)
+                    }
+                }
+                .padding(.horizontal, Ledger.pageMargin)
+                .padding(.bottom, 24)
+                .frame(maxWidth: .infinity, alignment: .leading)
+            }
+            .background(Ledger.bgScreen.ignoresSafeArea())
+            // The classic wrapper, verbatim — the pushed screens are the classic ones and keep
+            // their own chrome (#1027 sky note in `moreTab`).
+            .navigationDestination(for: MoreDestination.self) { route in
+                route.destination
+                    .background(StrandPalette.surfaceBase.ignoresSafeArea())
+                    .navigationBarTitleDisplayMode(.inline)
+                    .toolbarBackground(.hidden, for: .navigationBar)
+            }
+        }
+    }
+
+    /// One Ledger overflow group: hairline rule, overline header, rows.
+    private func ledgerMoreSection<Rows: View>(_ title: String, first: Bool = false,
+                                               @ViewBuilder rows: () -> Rows) -> some View {
+        VStack(alignment: .leading, spacing: 0) {
+            Rectangle()
+                .fill(Ledger.hairline)
+                .frame(height: Ledger.hairlineWidth)
+            Text(title).ledgerOverline()
+                .padding(.top, 14)
+                .padding(.bottom, 4)
+            rows()
+        }
+        .padding(.top, first ? 18 : 16)
+    }
+
     /// One titled, COLLAPSIBLE group in the More index (S2): the app's overline (UPPERCASE) becomes a
     /// tappable header with a disclosure chevron; tapping it expands/collapses the grouped rows card.
     /// Insights + Body default open, Data + App default collapsed (the `expandedMoreSections` seed) so the
@@ -764,6 +846,42 @@ private enum MoreDestination: Hashable {
 /// the SF Symbol icon tinted `StrandPalette.accent`, the title in the body text colour, a `Spacer`, and a
 /// trailing `chevron.right` in `textTertiary`. ~44pt min height + the card's row insets keep the whole row a
 /// comfortable tap target.
+/// One Ledger overflow row: a tertiary line icon in a fixed column, the title, a chevron — a
+/// value-pushing `NavigationLink` like `MoreRow`, drawn in the Ledger row idiom (44pt min height,
+/// hairline beneath, no card).
+private struct LedgerMoreRow: View {
+    let title: LocalizedStringKey
+    let icon: String
+    let destination: MoreDestination
+
+    init(_ title: LocalizedStringKey, _ icon: String, _ destination: MoreDestination) {
+        self.title = title
+        self.icon = icon
+        self.destination = destination
+    }
+
+    var body: some View {
+        NavigationLink(value: destination) {
+            HStack(spacing: 12) {
+                Image(systemName: icon)
+                    .font(.system(size: 14, weight: .regular))
+                    .foregroundStyle(Ledger.textTertiary)
+                    .frame(width: 22, alignment: .center)
+                Text(title)
+                    .font(LedgerType.label(14, LedgerType.semibold))
+                    .foregroundStyle(Ledger.textPrimary)
+                Spacer(minLength: 8)
+                Image(systemName: "chevron.right")
+                    .font(.system(size: 11, weight: .semibold))
+                    .foregroundStyle(Ledger.textTertiary)
+            }
+            .frame(minHeight: 44)
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+    }
+}
+
 private struct MoreRow: View {
     let title: LocalizedStringKey
     let icon: String

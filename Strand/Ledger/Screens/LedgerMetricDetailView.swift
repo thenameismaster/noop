@@ -344,6 +344,7 @@ struct LedgerMetricDetailView: View {
         VStack(alignment: .leading, spacing: 0) {
             LedgerMetricDetailChart(
                 points: window?.chartPoints ?? [],
+                scrubLabels: window?.scrubLabels ?? [],
                 bandTopFraction: window?.bandTopFraction,
                 bandBottomFraction: window?.bandBottomFraction,
                 bandLabel: window?.baselineLabel,
@@ -763,12 +764,22 @@ struct LedgerMetricDetailView: View {
         let domain = LedgerScale.domain(values: values, including: band)
 
         var chartPoints: [CGPoint] = []
+        var scrubLabels: [String] = []
         var bandTop: CGFloat?
         var bandBottom: CGFloat?
         if let domain, values.count >= 2 {
             chartPoints = values.enumerated().map { index, value in
                 CGPoint(x: LedgerScale.normalizedX(index, count: values.count),
                         y: LedgerScale.normalizedY(value, in: domain))
+            }
+            // One pre-formatted readout per point ("52 ms · Aug 12"), index-aligned with
+            // `chartPoints`, so the scrub gesture never formats on the drag path.
+            scrubLabels = windowed.map { point in
+                let value = bare(point.value)
+                let date = LedgerMetricDay.axisLabel(point.day)
+                return displayUnit.isEmpty
+                    ? "\(value) \u{00B7} \(date)"
+                    : "\(value) \(displayUnit) \u{00B7} \(date)"
             }
         }
         if let domain, let band {
@@ -817,6 +828,7 @@ struct LedgerMetricDetailView: View {
             deltaTone: deltaTone,
             subline: subline,
             chartPoints: chartPoints,
+            scrubLabels: scrubLabels,
             bandTopFraction: bandTop,
             bandBottomFraction: bandBottom,
             baselineLabel: bandLabel,
@@ -882,6 +894,8 @@ struct LedgerMetricDetailView: View {
         let subline: String
         /// Normalized chart points — x 0…1 left→right, y 0…1 top→bottom.
         let chartPoints: [CGPoint]
+        /// One pre-formatted scrub readout per chart point ("52 ms · Aug 12"), index-aligned.
+        let scrubLabels: [String]
         /// The baseline band's edges as 0…1 fractions of the plot height (`top` is the upper bound).
         let bandTopFraction: CGFloat?
         /// See `bandTopFraction`.
@@ -969,10 +983,16 @@ struct LedgerMetricDetailChart: View {
     static let axisGap: CGFloat = 6
 
     let points: [CGPoint]
+    /// Per-point readouts for the scrub crosshair, index-aligned with `points`. Empty disables
+    /// scrubbing (previews, the empty state).
+    var scrubLabels: [String] = []
     let bandTopFraction: CGFloat?
     let bandBottomFraction: CGFloat?
     let bandLabel: String?
     let accent: Color
+
+    /// The index under the user's finger, or nil when not scrubbing.
+    @State private var scrubIndex: Int?
 
     var body: some View {
         ZStack(alignment: .topLeading) {
@@ -983,8 +1003,26 @@ struct LedgerMetricDetailChart: View {
                         LedgerDrawIn(.chart) { progress in
                             plot(progress: progress, size: geo.size)
                         }
+                        scrubOverlay(in: geo.size)
                     }
                 }
+                // Touch-scrub: a HORIZONTAL drag on the plot pins the crosshair to the nearest
+                // point; lifting clears it. The gesture only claims the touch once the drag is
+                // horizontally dominant — a vertical drag that starts on the chart stays a page
+                // scroll (the recognizer-priority lesson the Today day-swipe taught).
+                .contentShape(Rectangle())
+                .gesture(
+                    DragGesture(minimumDistance: 12)
+                        .onChanged { value in
+                            guard points.count >= 2 else { return }
+                            if scrubIndex == nil {
+                                guard abs(value.translation.width) > abs(value.translation.height) else { return }
+                            }
+                            let fraction = min(max(value.location.x / max(geo.size.width, 1), 0), 1)
+                            scrubIndex = Int((fraction * CGFloat(points.count - 1)).rounded())
+                        }
+                        .onEnded { _ in scrubIndex = nil }
+                )
             }
             if points.count < 2 {
                 Text("Not enough history yet")
@@ -1045,6 +1083,39 @@ struct LedgerMetricDetailChart: View {
             }
         }
         .frame(width: size.width, height: size.height)
+    }
+
+    /// The scrub crosshair: a vertical hairline through the pinned point, a ring on the line, and
+    /// the pre-formatted readout pinned to the top of the plot (flipping sides at the midpoint so
+    /// it never leaves the chart).
+    @ViewBuilder
+    private func scrubOverlay(in size: CGSize) -> some View {
+        if let index = scrubIndex, points.indices.contains(index) {
+            let point = points[index]
+            let x = point.x * size.width
+
+            Rectangle()
+                .fill(Ledger.white(0.25))
+                .frame(width: 1, height: size.height)
+                .offset(x: x - 0.5)
+
+            Circle()
+                .stroke(Ledger.textPrimary, lineWidth: 1.5)
+                .frame(width: Self.dotRadius * 2 + 3, height: Self.dotRadius * 2 + 3)
+                .offset(x: x - Self.dotRadius - 1.5,
+                        y: point.y * size.height - Self.dotRadius - 1.5)
+
+            if scrubLabels.indices.contains(index) {
+                Text(scrubLabels[index])
+                    .font(LedgerType.numeral(12, LedgerType.semibold))
+                    .foregroundStyle(Ledger.textPrimary)
+                    .monospacedDigit()
+                    .lineLimit(1)
+                    .fixedSize()
+                    .frame(maxWidth: .infinity,
+                           alignment: point.x < 0.5 ? .trailing : .leading)
+            }
+        }
     }
 }
 

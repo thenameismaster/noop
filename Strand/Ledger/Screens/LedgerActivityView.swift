@@ -944,7 +944,7 @@ private struct LedgerActivitySessionActions: View {
             StartWorkoutSheet { name in model.startWorkout(sport: name) }
         }
         .sheet(isPresented: $showLiveWorkout) {
-            LiveWorkoutView(onClose: { showLiveWorkout = false })
+            LedgerLiveWorkoutView(onClose: { showLiveWorkout = false })
                 .environmentObject(model)
                 .environmentObject(live)
         }
