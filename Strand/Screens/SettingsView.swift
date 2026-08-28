@@ -1732,6 +1732,8 @@ struct SettingsView: View {
     /// model — a 4.0 owner still needs the export to share decoded streams. The SpO2 candidate card is
     /// split out the same way (see `spo2CandidateCard`'s comment) — it is NOT WHOOP-5/MG-specific.
     @ViewBuilder private var experimentalCard: some View {
+        ledgerUICard
+        auroraUICard
         liquidTodayCard
         liveSessionsCard
         if showFiveMGControls { fiveMGCard }
@@ -1758,6 +1760,58 @@ struct SettingsView: View {
                 .toggleStyle(.switch)
                 .tint(StrandPalette.accent)
                 Text("Replaces the Today tab with the prototype redesign. Turn it off any time to return to the classic dashboard. Reads the same live data from your strap.")
+                    .font(StrandFont.caption)
+                    .foregroundStyle(StrandPalette.textTertiary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+        }
+    }
+
+    /// Opt-in Aurora UI preview (default OFF). An ADDITIVE fork of Home / Trends / Sleep / More: the
+    /// original screens are untouched and come straight back when this is turned off. Same key the
+    /// iOS tab shell (`RootTabView`) and the macOS shell (`RootView`) read.
+    @AppStorage("noop.auroraUIEnabled") private var auroraUIEnabled = false
+    private var auroraUICard: some View {
+        SettingsSection(
+            icon: "sparkles",
+            title: "Experimental · Aurora UI",
+            blurb: "A redesigned premium interface across Home, Trends, Sleep and More: a single dominant Charge ring, calmer typography and spacing, and a searchable navigation hub. Same numbers, same live data — presentation only."
+        ) {
+            VStack(alignment: .leading, spacing: NoopMetrics.rowSpacing) {
+                Toggle(isOn: $auroraUIEnabled) {
+                    Text("Aurora UI (Preview)")
+                        .font(StrandFont.subhead)
+                        .foregroundStyle(StrandPalette.textPrimary)
+                }
+                .toggleStyle(.switch)
+                .tint(StrandPalette.accent)
+                Text("Switches the main screens to the redesigned premium interface. The original interface remains available — turn this off at any time to return to it. Nothing about your data, scoring or strap connection changes.")
+                    .font(StrandFont.caption)
+                    .foregroundStyle(StrandPalette.textTertiary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+        }
+    }
+
+    /// Ledger UI — the "Athlete's Ledger" redesign. Additive and default OFF, exactly like Aurora, and
+    /// it TAKES PRECEDENCE over Aurora when both are on (the shells read the same rule). Same key the
+    /// iOS tab shell (`RootTabView`) and the macOS shell (`RootView`) read.
+    @AppStorage(LedgerFlags.ledgerUIEnabledKey) private var ledgerUIEnabled = false
+    private var ledgerUICard: some View {
+        SettingsSection(
+            icon: "chart.line.uptrend.xyaxis",
+            title: "Experimental · Ledger UI",
+            blurb: "A five-tab redesign — Today, Sleep, Body, Activity, Trends — built around a dark editorial canvas: data drawn straight on the page instead of inside cards, a single readiness arc, and every number carried against its own baseline. Same numbers, same live data — presentation only."
+        ) {
+            VStack(alignment: .leading, spacing: NoopMetrics.rowSpacing) {
+                Toggle(isOn: $ledgerUIEnabled) {
+                    Text("Ledger UI (Preview)")
+                        .font(StrandFont.subhead)
+                        .foregroundStyle(StrandPalette.textPrimary)
+                }
+                .toggleStyle(.switch)
+                .tint(StrandPalette.accent)
+                Text("Switches the main screens to the Ledger interface. Everything else — Settings, Devices, Insights and the rest of the old More list — stays one tap away behind the \u{201C}\u{2026}\u{201D} in the Today header. The original interface remains available; turn this off at any time to return to it. Nothing about your data, scoring or strap connection changes.")
                     .font(StrandFont.caption)
                     .foregroundStyle(StrandPalette.textTertiary)
                     .fixedSize(horizontal: false, vertical: true)

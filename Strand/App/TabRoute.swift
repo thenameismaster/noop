@@ -46,23 +46,9 @@ extension View {
             switch route {
             case .fullDayChart: FullDayChartView()
             case .metric(let key):
-                // Every caller passes a catalog key, so the fallback is theoretical; Health is the
-                // catch-all vitals surface. (Pre-#198 Trends fell back to the Explorer instead —
-                // unified here rather than carrying two never-taken branches.)
-                if let m = MetricCatalog.all.first(where: { $0.key == key }) {
-                    MetricDetailView(metric: m)
-                } else {
-                    HealthView()
-                }
+                MetricRouteHost(key: key, source: nil)
             case .metricSourced(let key, let source):
-                // Exact (key, source) resolution, order-independent. Fall back to the bare-key entry,
-                // then Health, so a stale route can never dead-end.
-                if let m = MetricCatalog.metric(key: key, source: source)
-                    ?? MetricCatalog.all.first(where: { $0.key == key }) {
-                    MetricDetailView(metric: m)
-                } else {
-                    HealthView()
-                }
+                MetricRouteHost(key: key, source: source)
             case .metricExplorer: MetricExplorerView()
             case .workouts: WorkoutsView()
             case .dataSources: DataSourcesView()
@@ -73,5 +59,40 @@ extension View {
             case .coupled: CoupledView()
             }
         }
+    }
+}
+
+/// Resolves a `.metric` / `.metricSourced` push to the ACTIVE shell's detail screen.
+///
+/// The Ledger shell marks its tab stacks with `\.ledgerShellActive` (its "…" overflow sheet, which
+/// hosts the classic More list, marks itself back off), so a metric tap inside the Ledger opens
+/// `LedgerMetricDetailView` while every other stack — the classic iOS tabs, the macOS panes, the
+/// Aurora shell — keeps the classic `MetricDetailView`, byte-for-byte as before. Resolution when
+/// classic: exact (key, source) first, then the bare-key entry, then Health, so a stale route can
+/// never dead-end (the pre-host behaviour, unchanged). The Ledger detail does its own resolution
+/// from the same catalog and renders its own honest unknown-metric state.
+private struct MetricRouteHost: View {
+    @Environment(\.ledgerShellActive) private var ledgerShellActive
+    /// The owning Ledger tab's name (spec §06 puts the origin after the back chevron).
+    @Environment(\.ledgerBackTitle) private var ledgerBackTitle
+
+    let key: String
+    let source: String?
+
+    var body: some View {
+        if ledgerShellActive {
+            LedgerMetricDetailView(metricKey: key, source: source,
+                                   backTitle: ledgerBackTitle
+                                       ?? LedgerMetricDetailView.defaultBackTitle)
+        } else if let m = classicMetric {
+            MetricDetailView(metric: m)
+        } else {
+            HealthView()
+        }
+    }
+
+    private var classicMetric: MetricDescriptor? {
+        if let source, let m = MetricCatalog.metric(key: key, source: source) { return m }
+        return MetricCatalog.all.first { $0.key == key }
     }
 }

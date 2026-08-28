@@ -13,6 +13,14 @@ enum NavItem: String, CaseIterable, Identifiable, Hashable {
     case compare = "Compare"
     case insights = "Insights"
     case sleep = "Sleep"
+    // The Aurora fork's three PILLAR screens. They are listed in the sidebar only while
+    // `noop.auroraUIEnabled` is on (see `RootView.visibleItems(in:)`); the enum carries them
+    // unconditionally so `NavGroup.all` can still account for every case (the M5 routability test).
+    // `bodyPillar`, not `body`: a case literally named `body` on a type used all over SwiftUI code
+    // is a readability trap. The rawValue the user never sees stays "Body".
+    case recovery = "Recovery"
+    case strain = "Strain"
+    case bodyPillar = "Body"
     case trends = "Trends"
     case workouts = "Workouts"
     case health = "Health"
@@ -50,6 +58,9 @@ enum NavItem: String, CaseIterable, Identifiable, Hashable {
         case .compare: return "Compare"
         case .insights: return "Insights"
         case .sleep: return "Sleep"
+        case .recovery: return "Recovery"
+        case .strain: return "Strain"
+        case .bodyPillar: return "Body"
         case .trends: return "Trends"
         case .workouts: return "Workouts"
         case .health: return "Health"
@@ -94,6 +105,9 @@ enum NavItem: String, CaseIterable, Identifiable, Hashable {
         case .compare: return String(localized: "Compare")
         case .insights: return String(localized: "Insights")
         case .sleep: return String(localized: "Sleep")
+        case .recovery: return String(localized: "Recovery")
+        case .strain: return String(localized: "Strain")
+        case .bodyPillar: return String(localized: "Body")
         case .trends: return String(localized: "Trends")
         case .workouts: return String(localized: "Workouts")
         case .health: return String(localized: "Health")
@@ -117,6 +131,16 @@ enum NavItem: String, CaseIterable, Identifiable, Hashable {
         }
     }
 
+    /// Rows that exist only inside the Aurora fork. The sidebar filters these out entirely while
+    /// `noop.auroraUIEnabled` is off, so the shipped sidebar is unchanged; `NavGroup.all` still lists
+    /// them so no case is ever orphaned.
+    var isAuroraOnly: Bool {
+        switch self {
+        case .recovery, .strain, .bodyPillar: return true
+        default: return false
+        }
+    }
+
     var icon: String {
         switch self {
         case .today: return "circle.hexagongrid.fill"
@@ -130,6 +154,9 @@ enum NavItem: String, CaseIterable, Identifiable, Hashable {
         case .compare: return "chart.line.uptrend.xyaxis"
         case .insights: return "lightbulb.fill"
         case .sleep: return "moon.stars.fill"
+        case .recovery: return "bolt.heart"
+        case .strain: return "flame"
+        case .bodyPillar: return "figure.stand"
         case .trends: return "chart.xyaxis.line"
         case .workouts: return "figure.run"
         case .health: return "heart.text.square.fill"
@@ -171,6 +198,11 @@ struct NavGroup: Identifiable {
     static let all: [NavGroup] = [
         NavGroup(title: "Today", id: "today", items: [.today]),
         NavGroup(title: "Sleep", id: "sleep", items: [.sleep]),
+        // The Aurora fork's pillar screens, in their own group so the whole section disappears when
+        // the flag is off (a multi-item group with no visible rows renders nothing — see the sidebar
+        // `ForEach`). Placed directly under Today/Sleep because they are the fork's primary surfaces,
+        // not utilities. Every case here answers `isAuroraOnly`.
+        NavGroup(title: "Pillars", id: "pillars", items: [.recovery, .strain, .bodyPillar]),
         NavGroup(title: "Body", id: "body", items: [
             .workouts, .live, .health, .stress, .intervals, .breathe,
         ]),
@@ -202,6 +234,9 @@ struct RootView: View {
     @EnvironmentObject var router: NavRouter
     /// The liquid Today (default) vs the classic Today, same flag the iOS shell + Settings toggle read.
     @AppStorage("noop.liquidTodayEnabled") private var liquidTodayEnabled = true
+    /// Aurora UI (preview) — the additive redesigned screens, same flag the iOS shell + Settings toggle
+    /// read. Default OFF, so this shell keeps its existing panes unless the user opts in.
+    @AppStorage("noop.auroraUIEnabled") private var auroraUIEnabled = false
     @State private var selection: NavItem? = .today
     /// Which sidebar groups are expanded (S1, #805). Default = the group owning the launch selection
     /// (`.today`). The single-item Today/Sleep sections always read expanded so their one row shows; the
@@ -332,6 +367,20 @@ struct RootView: View {
             }
             if dest != nil { router.requestedDestination = nil }
         }
+        // The fork's pillar group is the point of the Aurora sidebar, so it opens with the flag rather
+        // than making the user find and expand it. Turning the flag OFF hides those rows, which would
+        // otherwise leave `selection` pointing at a row that is no longer listed (the detail column would
+        // keep showing an Aurora pillar with nothing selected in the sidebar) — so fall back to Today.
+        .onAppear {
+            if auroraUIEnabled { expandedGroups.insert("pillars") }
+        }
+        .onChangeCompat(of: auroraUIEnabled) { on in
+            if on {
+                expandedGroups.insert("pillars")
+            } else if let sel = selection, sel.isAuroraOnly {
+                selection = .today
+            }
+        }
         // Whenever the selection moves (a cross-screen route, or restoring a deep destination), make sure
         // the group that owns it is expanded so the selected row is actually visible, not hidden inside a
         // collapsed section (S1). User-driven collapses of OTHER groups are preserved.
@@ -378,9 +427,14 @@ struct RootView: View {
     /// user-search semantics (case-insensitive, diacritic-insensitive, locale-aware) in one call.
     /// ALL groups filter, including single-item Today/Sleep; a group with no hits disappears entirely.
     private func visibleItems(in group: NavGroup) -> [NavItem] {
+        // The Aurora fork's pillar rows are listed in `NavGroup.all` unconditionally (so the M5
+        // routability contract still holds for every enum case) but are only OFFERED while the
+        // preview is on. With the flag off this filter is the identity on every shipped group, so
+        // the sidebar is exactly what it was before the fork.
+        let items = auroraUIEnabled ? group.items : group.items.filter { !$0.isAuroraOnly }
         let query = trimmedQuery
-        guard !query.isEmpty else { return group.items }
-        return group.items.filter { $0.localizedTitle.localizedStandardContains(query) }
+        guard !query.isEmpty else { return items }
+        return items.filter { $0.localizedTitle.localizedStandardContains(query) }
     }
 
     /// One selectable destination row (same Label styling the flat list used), tagged for selection.
@@ -429,8 +483,11 @@ struct RootView: View {
         case .explore: MetricExplorerView()
         case .compare: CompareView()
         case .insights: InsightsView()
-        case .sleep: SleepView()
-        case .trends: TrendsView()
+        case .sleep: sleepDetail
+        case .recovery: recoveryDetail
+        case .strain: strainDetail
+        case .bodyPillar: bodyPillarDetail
+        case .trends: trendsDetail
         case .workouts: WorkoutsView()
         case .health: HealthView()
         case .stress: StressView()
@@ -464,7 +521,8 @@ struct RootView: View {
             // Today's root-level links push TabRoute VALUES (#198), so this stack must register
             // their destinations (once per stack — a double registration double-pushes, #38).
             Group {
-                if liquidTodayEnabled { LiquidTodayView() } else { TodayView() }
+                if auroraUIEnabled { AuroraTodayView() }
+                else if liquidTodayEnabled { LiquidTodayView() } else { TodayView() }
             }
             .tabRouteDestinations()
         }
@@ -493,6 +551,28 @@ struct RootView: View {
         LiveView()
         #endif
     }
+
+    // The Aurora preview panes for the two remaining redesigned detail screens. Both are drop-in for
+    // the originals: AuroraTrendsView wraps its OWN NavigationStack + tabRouteDestinations() on macOS
+    // (exactly as TrendsView does, because the .trends pane has none), and AuroraSleepView pushes
+    // nothing, so neither needs extra chrome here.
+    @ViewBuilder private var sleepDetail: some View {
+        if auroraUIEnabled { AuroraSleepView() } else { SleepView() }
+    }
+
+    @ViewBuilder private var trendsDetail: some View {
+        if auroraUIEnabled { AuroraTrendsView() } else { TrendsView() }
+    }
+
+    // The Aurora pillar panes. Each is reachable only while the fork is on (`visibleItems`), but the
+    // switch in `detail` must stay exhaustive, so each case renders its screen unconditionally and the
+    // gate lives at the sidebar. None of the three pushes a `TabRoute` or a `NavigationLink` value, so
+    // — unlike `todayDetail` — they need no `NavigationStack` wrapper on this stackless detail column.
+    @ViewBuilder private var recoveryDetail: some View { AuroraRecoveryView() }
+
+    @ViewBuilder private var strainDetail: some View { AuroraStrainView() }
+
+    @ViewBuilder private var bodyPillarDetail: some View { AuroraBodyView() }
 }
 
 /// The NOOP logo mark — an **open recovery ring** (~80% arc, round caps, starting at 12 o'clock)

@@ -32,12 +32,19 @@ struct RootTabView: View {
     /// root view alive, so an at-root re-tap keeps scroll position and never re-runs `.task`
     /// (#198; the #197 resetID/`.id()` rebuild reset both). Requires the tab roots' first-hop
     /// links to push `TabRoute`/`MoreDestination` VALUES — closure-destination links bypass the path.
-    @State private var tabPaths: [NavigationPath] = Array(repeating: NavigationPath(), count: 4)
+    ///
+    /// SIZED FOR THE LARGEST SHELL, not the active one. The classic shell has 4 tabs and the Aurora
+    /// shell has 5, and the flag can flip at runtime from Settings — so this array is allocated at 5
+    /// unconditionally. A conditionally-sized array would make `tabPaths[selectedTab]` (read on every
+    /// body pass, in the gesture mask) a crash the instant the user toggled the flag while on the last
+    /// tab. The classic path is unaffected: index 4 is simply never addressed while the flag is off.
+    @State private var tabPaths: [NavigationPath] = Array(repeating: NavigationPath(), count: 5)
     /// One scroll-to-top token per tab. Bumped when the user re-taps the active tab while it's ALREADY
     /// at its root — the other half of the iOS convention #197/#198 left unserved (an at-root re-tap was
     /// a no-op). Threaded into each tab's root via `\.scrollToTopSignal`; ScreenScaffold / LiquidTodayView
     /// scroll to their top anchor when their tab's token changes.
-    @State private var scrollTop: [Int] = Array(repeating: 0, count: 4)
+    /// Sized at 5 for the same reason `tabPaths` is — see the note there.
+    @State private var scrollTop: [Int] = Array(repeating: 0, count: 5)
     /// Which More-tab groups are expanded (S2). Insights + Body stay open at rest; Data + App collapse to
     /// just their header until tapped. Persisted (#860 item 2): the user's open/closed choice must SURVIVE
     /// leaving and re-entering the More tab (and relaunch), not reset to the seed every visit. Backed by an
@@ -50,10 +57,45 @@ struct RootTabView: View {
     /// Today if they prefer it (keyed identically to the SettingsView toggle). Default ON.
     @AppStorage("noop.liquidTodayEnabled") private var liquidTodayEnabled = true
 
-    /// The Today tab root, honouring the liquid/classic preference.
+    /// Aurora UI (preview) — an ADDITIVE redesigned shell over the same data. Default OFF, so the
+    /// shipped experience is untouched unless the user opts in from Settings. Keyed identically to the
+    /// SettingsView toggle and the macOS shell (`RootView`).
+    @AppStorage("noop.auroraUIEnabled") private var auroraUIEnabled = false
+
+    /// Ledger UI — the "Athlete's Ledger" redesign (`design_handoff_noop_redesign`). Like Aurora it is
+    /// ADDITIVE and toggle-gated, default OFF, so the shipped experience is byte-for-byte unchanged
+    /// unless the user opts in from Settings. It takes PRECEDENCE over Aurora when both are on, because
+    /// it is the newer fork; the key is shared with `SettingsView` and the macOS shell (`RootView`).
+    @AppStorage(LedgerFlags.ledgerUIEnabledKey) private var ledgerUIEnabled = false
+
+    /// The navigation path for the Ledger shell's "…" overflow sheet. The Ledger shell has no More
+    /// TAB, so the More hub is presented as a sheet and needs a stack of its own — it cannot borrow a
+    /// tab's path without letting a sheet push onto a tab that is still on screen behind it.
+    @State private var ledgerOverflowPath = NavigationPath()
+
+    /// The CLASSIC Today tab root: the liquid redesign by default, the classic Today if the user
+    /// prefers it. The Aurora preview no longer swaps a root in place — it swaps the whole shell
+    /// (`auroraShell`), because its tab STRUCTURE differs, so this property is reached only while the
+    /// Aurora flag is off and is byte-for-byte the pre-Aurora behaviour.
     @ViewBuilder private var todayTabRoot: some View {
         if liquidTodayEnabled { LiquidTodayView() } else { TodayView() }
     }
+
+    /// The classic Trends tab root. Aurora has no Trends TAB — Trends lives behind the Aurora More
+    /// hub (`AuroraMoreDestination.trends`), which is that hub's own spotlight subject.
+    @ViewBuilder private var trendsTabRoot: some View {
+        TrendsView()
+    }
+
+    /// The classic Sleep tab root.
+    @ViewBuilder private var sleepTabRoot: some View {
+        SleepView()
+    }
+
+    /// The highest valid tab index for the ACTIVE shell: 3 classic (Today/Trends/Sleep/More), 4 Aurora
+    /// (Today/Recovery/Strain/Sleep/More). Every index-clamping site reads this rather than a literal,
+    /// so the swipe gesture and the flag-flip clamp can never address a tab the shell does not show.
+    private var lastTabIndex: Int { (ledgerUIEnabled || auroraUIEnabled) ? 4 : 3 }
 
     /// Native tab selection binding. SwiftUI sends taps on the already-selected item through the
     /// setter, which lets the system tab bar retain the app's refresh / pop-to-root / scroll-to-top
@@ -95,23 +137,158 @@ struct RootTabView: View {
                 guard selectedTab != 0 else { return }
                 let dx = v.translation.width, dy = v.translation.height
                 guard abs(dx) > 60, abs(dx) > abs(dy) * 1.6 else { return }
-                let next = min(3, max(0, selectedTab + (dx < 0 ? 1 : -1)))
+                // Clamp to the ACTIVE shell's last tab, not a literal 3: the Aurora shell has five
+                // tabs, and a hard 3 would make the last tab unreachable by swipe there.
+                let next = min(lastTabIndex, max(0, selectedTab + (dx < 0 ? 1 : -1)))
                 if next != selectedTab {
                     withAnimation(.timingCurve(0.22, 1, 0.36, 1, duration: 0.24)) { selectedTab = next }
                 }
             }
     }
 
-    var body: some View {
+    /// The tab shell. Two WHOLE TabViews behind one flag rather than conditional children inside a
+    /// single TabView: the Aurora fork changes the tab STRUCTURE (five pillars, no Trends tab), not
+    /// just what a tab root renders, and position 3 is a different KIND of tab in each (More vs
+    /// Sleep). Branching at the TabView itself keeps each configuration statically shaped — no
+    /// `_ConditionalContent` children with tags for the platform bar to reconcile — and means the
+    /// classic shell below is the pre-Aurora expression verbatim.
+    @ViewBuilder private var shell: some View {
+        if ledgerUIEnabled { ledgerShell } else if auroraUIEnabled { auroraShell } else { classicShell }
+    }
+
+    /// The shipped four-tab shell. UNCHANGED from before the Aurora fork.
+    private var classicShell: some View {
         // The platform tab bar is intentionally left fully native. iOS 26 supplies Liquid Glass and
         // its dynamic interaction with scrolling content automatically; older supported releases use
         // the corresponding system material and safe-area behaviour from the same TabView.
         TabView(selection: nativeTabSelection) {
             tab(todayTabRoot, "Today", "square.grid.2x2", path: $tabPaths[0], scrollSignal: scrollTop[0]).tag(0)
-            tab(TrendsView(), "Trends", "chart.line.uptrend.xyaxis", path: $tabPaths[1], scrollSignal: scrollTop[1]).tag(1)
-            tab(SleepView(), "Sleep", "bed.double", path: $tabPaths[2], scrollSignal: scrollTop[2]).tag(2)
+            tab(trendsTabRoot, "Trends", "chart.line.uptrend.xyaxis", path: $tabPaths[1], scrollSignal: scrollTop[1]).tag(1)
+            tab(sleepTabRoot, "Sleep", "bed.double", path: $tabPaths[2], scrollSignal: scrollTop[2]).tag(2)
             moreTab(path: $tabPaths[3], scrollSignal: scrollTop[3]).tag(3)
         }
+    }
+
+    /// The Aurora five-tab shell: one tab per PILLAR. The overview summarises and the three pillar
+    /// tabs are the full screens it summarises, so a pillar is one tap away from anywhere rather than
+    /// a push buried under Today. Trends is demoted out of the bar (it is the More hub's spotlight),
+    /// and Body is deliberately NOT a tab — it is reached from Today's vitals row and from More, so
+    /// the bar stays at the five things a wearer checks daily.
+    private var auroraShell: some View {
+        TabView(selection: nativeTabSelection) {
+            tab(AuroraTodayView(), "Today", "square.grid.2x2", path: $tabPaths[0], scrollSignal: scrollTop[0]).tag(0)
+            tab(AuroraRecoveryView(), "Recovery", "bolt.heart", path: $tabPaths[1], scrollSignal: scrollTop[1]).tag(1)
+            tab(AuroraStrainView(), "Strain", "flame", path: $tabPaths[2], scrollSignal: scrollTop[2]).tag(2)
+            tab(AuroraSleepView(), "Sleep", "bed.double", path: $tabPaths[3], scrollSignal: scrollTop[3]).tag(3)
+            moreTab(path: $tabPaths[4], scrollSignal: scrollTop[4]).tag(4)
+        }
+    }
+
+    /// The Ledger five-tab shell: Today · Sleep · Body · Activity · Trends (spec item 7). There is no
+    /// More TAB — the old More list moves behind the "…" affordance in the Today header, where all 28
+    /// destinations keep their existing routes.
+    ///
+    /// The system tab bar is HIDDEN and `LedgerTabBar` is supplied through a `safeAreaInset` instead,
+    /// because the spec's bar is custom art (line glyphs transcribed from the board's SVGs, a mint dot
+    /// on the active item). A `safeAreaInset` — rather than an `overlay` — is what makes every screen's
+    /// scroll content inset itself above the bar automatically, so nothing hides underneath it.
+    ///
+    /// This is still a real `TabView`, which is the point: all five roots stay ALIVE across switches, so
+    /// scroll position survives and `.task` does not re-run — the same contract the classic shell has.
+    /// Selection stays the shared `Int` `selectedTab`, so the swipe gesture, the pop-to-root/scroll-to-top
+    /// conventions (#135/#198) and the flag-flip clamp all keep working untouched.
+    private var ledgerShell: some View {
+        TabView(selection: nativeTabSelection) {
+            ledgerTab(LedgerTodayView(),    tab: .today,    path: $tabPaths[0], scrollSignal: scrollTop[0]).tag(0)
+            ledgerTab(LedgerSleepView(),    tab: .sleep,    path: $tabPaths[1], scrollSignal: scrollTop[1]).tag(1)
+            ledgerTab(LedgerBodyView(),     tab: .body,     path: $tabPaths[2], scrollSignal: scrollTop[2]).tag(2)
+            ledgerTab(LedgerActivityView(), tab: .activity, path: $tabPaths[3], scrollSignal: scrollTop[3]).tag(3)
+            ledgerTab(LedgerTrendsView(),   tab: .trends,   path: $tabPaths[4], scrollSignal: scrollTop[4]).tag(4)
+        }
+        // Spec §01.7 — the old More list moves behind the Today header's "…", with all 28 destinations
+        // keeping their EXISTING routes. Injecting `moreTab` itself is what guarantees that: it is the
+        // very same list the classic shell's More tab renders, not a copy that could drift out of sync.
+        // `ledgerShellActive` is explicitly false: the sheet is presented from inside a Ledger tab
+        // stack (whose environment it inherits), but it hosts the CLASSIC hub, so its metric pushes
+        // must open the classic detail.
+        .environment(\.ledgerOverflowContent, AnyView(
+            moreTab(path: $ledgerOverflowPath, scrollSignal: 0)
+                .environment(\.ledgerShellActive, false)
+        ))
+        // Spec §Tap Map routes some Today taps to a TAB ("last-night strip → Sleep tab"); only this
+        // shell owns tab selection, so the ability is injected. Runs through `ledgerTabBinding`, the
+        // same path the bar's own taps take.
+        .environment(\.ledgerSwitchTab) { tab in
+            ledgerTabBinding.wrappedValue = tab
+        }
+    }
+
+    /// Bridges `LedgerTabBar`'s `LedgerTab` selection onto the shared integer `selectedTab`, so the
+    /// Ledger bar drives the very same state the classic and Aurora bars do.
+    ///
+    /// The getter CLAMPS rather than subscripting blind: `selectedTab` can briefly hold a value from a
+    /// wider shell while a flag flip settles, and an unclamped `allCases[selectedTab]` would trap. The
+    /// setter never has to handle a re-tap — `LedgerTabBar` routes those to `onReselect` itself.
+    private var ledgerTabBinding: Binding<LedgerTab> {
+        Binding(
+            get: { LedgerTab.allCases[max(0, min(selectedTab, LedgerTab.allCases.count - 1))] },
+            set: { newTab in
+                guard let index = LedgerTab.allCases.firstIndex(of: newTab) else { return }
+                if index != selectedTab { selectedTab = index }
+            }
+        )
+    }
+
+    /// A Ledger tab container. Deliberately mirrors `tab(_:_:_:path:scrollSignal:)` — its own
+    /// `NavigationStack` bound to the tab's path (so a re-tap pops to root, #135/#198), the shared
+    /// `tabRouteDestinations()` registration done ONCE per stack (#38), and the scroll-to-top token —
+    /// differing only in that it paints the Ledger canvas and hides the system tab bar.
+    private func ledgerTab<V: View>(_ view: V, tab: LedgerTab, path: Binding<NavigationPath>, scrollSignal: Int) -> some View {
+        NavigationStack(path: path) {
+            view
+                .background(Ledger.bgScreen.ignoresSafeArea())
+                .toolbar(.hidden, for: .navigationBar)
+                .toolbar(.hidden, for: .tabBar)
+                .tabRouteDestinations()
+        }
+        .environment(\.scrollToTopSignal, scrollSignal)
+        // The Ledger's tab bar, attached PER TAB rather than once around the `TabView`.
+        //
+        // WHY NOT ON THE TABVIEW. `safeAreaInset` only insets the view it is applied to. Around the
+        // TabView it placed the bar correctly but never shrank the pages inside — each page hides the
+        // system tab bar (`.toolbar(.hidden, for: .tabBar)`) and laid itself out over the bar's strip
+        // — so a screen's last section (Today's COACH note, the detail's MOVES WITH rows) sat under
+        // the bar with no way to scroll it clear: a drag revealed it and the release bounced it back.
+        //
+        // Applied to the STACK, the inset is the documented case: it reserves the bar's height inside
+        // the page, every ScrollView within ends above the bar, and pushed destinations inherit it, so
+        // the bar keeps spanning a push exactly as it did before. Each tab therefore renders its own
+        // bar, but all of them read and drive the SAME `ledgerTabBinding`, so they are identical and
+        // the visible one is always in sync. That also makes the reserve self-correcting: it is the
+        // real bar's height, on every device, with no measurement to drift.
+        .safeAreaInset(edge: .bottom, spacing: 0) {
+            LedgerTabBar(selection: ledgerTabBinding, onReselect: { _ in reselectTab(selectedTab) })
+        }
+        // …and the matching CONTENT margin. The inset above draws the bar, but it does not shorten the
+        // scroll views inside the page — the pages hide the system tab bar and lay themselves out over
+        // the bar's strip, so a screen's last section (Today's COACH note, the detail's MOVES WITH
+        // rows) sat under the bar with no way to scroll it clear: a drag revealed it and the release
+        // bounced it straight back. `contentMargins` addresses the scroll CONTENT itself, which is
+        // exactly the thing that has to end above the bar, and it reaches every scroll view in the
+        // subtree — the tab root and everything pushed on top of it.
+        .contentMargins(.bottom, LedgerTabBar.reservedHeight, for: .scrollContent)
+        // Marks this stack as the Ledger's, so the shared TabRoute table resolves metric pushes to
+        // `LedgerMetricDetailView` (spec §06) instead of the classic detail. Set on the STACK so
+        // pushed destinations inherit it; the "…" overflow sheet marks itself back off, because it
+        // hosts the classic More list whose pushes must stay classic.
+        .environment(\.ledgerShellActive, true)
+        // …and names the owning tab, so a pushed detail's back link reads its real origin
+        // ("‹ Body" from Body) instead of the spec sheet's Trends-side default.
+        .environment(\.ledgerBackTitle, tab.title)
+    }
+
+    var body: some View {
+        shell
         .tint(StrandPalette.accent)
             // Tab crossfade — README §Motion: ~240ms opacity swap between tab roots, global calm
             // easing cubic-bezier(0.22,1,0.36,1).
@@ -173,8 +350,15 @@ struct RootTabView: View {
                 routedPillar = dest
                 router.requestedDestination = nil
             case .trends:
-                // Trends is a primary tab on iPhone (not a pillar sheet) — switch to it.
-                withAnimation(.timingCurve(0.22, 1, 0.36, 1, duration: 0.24)) { selectedTab = 1 }
+                if auroraUIEnabled {
+                    // The Aurora shell has NO Trends tab (tab 1 is Recovery there, so switching to it
+                    // would land the user on the wrong screen). Trends lives behind the More hub, so a
+                    // deep-link presents it through the shared pillar sheet instead.
+                    routedPillar = .trends
+                } else {
+                    // Trends is a primary tab on iPhone (not a pillar sheet) — switch to it.
+                    withAnimation(.timingCurve(0.22, 1, 0.36, 1, duration: 0.24)) { selectedTab = 1 }
+                }
                 router.requestedDestination = nil
             case .activeWorkout:
                 // The Today active-workout indicator opens Live through the quick-action Live sheet; once
@@ -214,6 +398,18 @@ struct RootTabView: View {
         .onChange(of: homeScreenQuickActionsEnabled) { _, _ in
             presentPendingHomeScreenQuickActionIfPossible()
         }
+        // Turning Aurora OFF drops the shell from five tabs to four. If the user was sitting on tab 4
+        // (More) the selection would survive with no tab claiming that tag, leaving the bar showing no
+        // selected item. Clamp to the new last index and land them on the equivalent screen (More is the
+        // last tab in BOTH shells). `tabPaths`/`scrollTop` are sized 5 either way, so no index goes stale.
+        .onChange(of: auroraUIEnabled) { _, _ in
+            if selectedTab > lastTabIndex { selectedTab = lastTabIndex }
+        }
+        // Same clamp for the Ledger flag: turning it OFF can drop a five-tab shell to the classic
+        // four, and `lastTabIndex` already accounts for both forks.
+        .onChange(of: ledgerUIEnabled) { _, _ in
+            if selectedTab > lastTabIndex { selectedTab = lastTabIndex }
+        }
     }
 
     /// Mandatory launch gates defer an external action. Once the shell is available, an explicit Home
@@ -248,10 +444,11 @@ struct RootTabView: View {
                 case .fusedRecord: FusedRecordHost()
                 case .rhythm: RhythmHost(onClose: { routedPillar = nil })
                 case .devices: DevicesView()
-                // .trends is never presented as a pillar sheet on iPhone (it's a primary tab — the
-                // requestedDestination handler switches `selectedTab` instead), but the switch must stay
-                // exhaustive. Fall back to Trends inside the sheet host if it ever arrives here.
-                case .trends: TrendsView()
+                // .trends reaches the pillar host only in the Aurora shell, which has no Trends tab
+                // (the classic shell switches `selectedTab` instead — see the requestedDestination
+                // handler). Render the fork's own Trends screen there; on iOS it supplies no stack of
+                // its own, so this host's stack + `tabRouteDestinations()` is exactly what it needs.
+                case .trends: if auroraUIEnabled { AuroraTrendsView() } else { TrendsView() }
                 // .activeWorkout routes through the quick-action Live sheet (handled above); this keeps the
                 // switch exhaustive and falls back to Live if it ever reaches the pillar host.
                 case .activeWorkout: LiveView()
@@ -381,6 +578,12 @@ struct RootTabView: View {
     // rows in a single grouped NoopCard with hairline dividers — the same row idiom Settings/Health use.
     private func moreTab(path: Binding<NavigationPath>, scrollSignal: Int) -> some View {
         NavigationStack(path: path) {
+            // Aurora preview: the redesigned hub registers its OWN navigationDestination and pushes
+            // VALUES onto this same bound path, so the pop-to-root-on-re-tap contract (#135/#198) and
+            // the scroll-to-top signal below are preserved. Default OFF keeps the original index.
+            if auroraUIEnabled {
+                AuroraMoreView()
+            } else {
             ScreenScaffold(title: "More", subtitle: "Everything else, one tap away",
                            onRefresh: { await repo.refresh() },
                            topBackground: liquidScaffoldSky()) {
@@ -450,6 +653,7 @@ struct RootTabView: View {
                     .background(StrandPalette.surfaceBase.ignoresSafeArea())
                     .navigationBarTitleDisplayMode(.inline)
                     .toolbarBackground(.hidden, for: .navigationBar)
+            }
             }
         }
         // Scroll the More index to the top on an at-root re-tap (#198 follow-up); read by its ScreenScaffold.
