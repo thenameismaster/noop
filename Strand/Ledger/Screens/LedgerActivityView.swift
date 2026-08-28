@@ -836,10 +836,20 @@ extension LedgerActivityView {
 // MARK: - Live strip
 
 /// The "live now" row under the strain hero: current heart rate and its zone, while the strap
-/// streams. A LEAF observer of `LiveState` — the 1 Hz heart-rate tick re-renders only this row.
-/// Renders nothing (zero height) when no live HR is arriving, so the screen is unchanged offline.
+/// streams. A LEAF observer — the 1 Hz heart-rate tick re-renders only this row.
+///
+/// THIS STRIP ARMS THE STREAM ITSELF. WHOOP straps do not stream heart rate unsolicited: a surface
+/// must take a ref-count on the realtime stream (`AppModel.startRealtimeHR`), which only the Live
+/// screen used to do — so a passive read here rendered nothing, ever. This strip therefore mirrors
+/// `LiveView`'s lifecycle exactly: one ref-count on `.onAppear` (a `TabView` keeps every tab alive,
+/// so these fire on tab switches, not just first build), balanced by the single release on
+/// `.onDisappear`, with `rearmRealtimeIfWanted()` on each settled connection because a NEW BLE
+/// connection needs the arm re-sent (and that call is ref-count-neutral and a no-op when nothing
+/// wants the stream). Net effect: the stream runs only while the Activity tab is actually in front,
+/// the same battery contract the Live screen had.
 private struct LedgerActivityLiveStrip: View {
     @EnvironmentObject private var live: LiveState
+    @EnvironmentObject private var model: AppModel
     let zoneSet: HRZoneSet
 
     private static let dotDiameter: CGFloat = 6
@@ -847,19 +857,33 @@ private struct LedgerActivityLiveStrip: View {
     private static let topGap: CGFloat = 12
 
     var body: some View {
-        if live.connected, let hr = live.heartRate {
-            HStack(spacing: 7) {
-                Circle()
-                    .fill(Ledger.accentLiveHR)
-                    .frame(width: Self.dotDiameter, height: Self.dotDiameter)
-                Text(String(localized: "live \u{00B7} \u{2665} \(hr) bpm \u{00B7} zone \(zoneSet.zoneNumber(forBPM: Double(hr)))"))
-                    .font(LedgerType.label(Self.textSize, LedgerType.semibold))
-                    .foregroundStyle(Ledger.textSecondary)
-                    .monospacedDigit()
+        Group {
+            if live.connected, let hr = live.heartRate {
+                row(String(localized: "live \u{00B7} \u{2665} \(hr) bpm \u{00B7} zone \(zoneSet.zoneNumber(forBPM: Double(hr)))"),
+                    dot: Ledger.accentLiveHR, text: Ledger.textSecondary)
+            } else if live.connected {
+                // Armed but no sample yet (the strap takes a few seconds to answer the arm).
+                row(String(localized: "live \u{00B7} starting\u{2026}"),
+                    dot: Ledger.textTertiary, text: Ledger.textTertiary)
             }
-            .padding(.top, Self.topGap)
-            .accessibilityElement(children: .combine)
         }
+        .onAppear { model.startRealtimeHR() }
+        .onDisappear { model.stopRealtimeHR() }
+        .onChangeCompat(of: live.connectSettled) { _ in model.rearmRealtimeIfWanted() }
+    }
+
+    private func row(_ text: String, dot: Color, text textColor: Color) -> some View {
+        HStack(spacing: 7) {
+            Circle()
+                .fill(dot)
+                .frame(width: Self.dotDiameter, height: Self.dotDiameter)
+            Text(text)
+                .font(LedgerType.label(Self.textSize, LedgerType.semibold))
+                .foregroundStyle(textColor)
+                .monospacedDigit()
+        }
+        .padding(.top, Self.topGap)
+        .accessibilityElement(children: .combine)
     }
 }
 
