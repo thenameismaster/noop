@@ -224,6 +224,16 @@ public struct LedgerDrawIn<Content: View>: View {
             withAnimation(LedgerMotion.reducedFade) { opacity = 1 }
         } else {
             withAnimation(kind.animation(reduced: false)) { progress = 1 }
+            // Belt: snap to final geometry once the draw should have finished. `onAppear` can fire
+            // while the view is not actually being rendered (a `TabView` pre-building a background
+            // tab), and an animation transaction begun there can be dropped — observed as a chart
+            // whose guides and axis drew but whose data never did, because `progress` stayed at 0.
+            // Writing `1` again is a no-op after a completed draw and a plain snap after a dropped
+            // one, so the chart is ALWAYS complete one duration after first appear.
+            let duration = LedgerMotion.duration(kind, reduced: false)
+            DispatchQueue.main.asyncAfter(deadline: .now() + duration + 0.1) {
+                progress = 1
+            }
         }
     }
 }

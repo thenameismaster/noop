@@ -160,6 +160,11 @@ struct LedgerActivityView: View {
                 strainHero
                     .padding(.top, Self.heroTopGap)
 
+                // 1b · Live now — renders only while the strap is streaming HR. Its OWN leaf view,
+                // so the 1 Hz tick re-renders that row alone, never this screen (the same isolation
+                // `LedgerTodaySyncStatus` uses; `LiveState` is deliberately not observed here).
+                LedgerActivityLiveStrip(zoneSet: profile.hrZoneSet)
+
                 // 2 · Totals strip
                 totalsStrip
                     .padding(.top, Self.totalsTopGap)
@@ -187,12 +192,12 @@ struct LedgerActivityView: View {
         // Every heavy derivation, once per refresh — never in `body`.
         .task(id: repo.refreshSeq) { await load() }
         .sheet(item: $detail) { target in
-            // `WorkoutDetailView` carries its own toolbar and is not hosted in a per-screen stack,
-            // so it rides its own `NavigationStack` inside the sheet — the shipped idiom
-            // (`WorkoutsView.swift`).
+            // The Ledger-styled session read, with the CLASSIC detail (edit, delete, splits,
+            // export) one push away inside the same stack — no workflow lost to the restyle.
             NavigationStack {
-                WorkoutDetailView(row: target.row)
+                LedgerWorkoutDetailView(row: target.row)
                     .environmentObject(repo)
+                    .environmentObject(profile)
             }
             #if os(iOS)
             .noopSheetPresentation(largeFirst: true)
@@ -825,6 +830,36 @@ extension LedgerActivityView {
             load28: [],
             yesterdayLine: nil
         )
+    }
+}
+
+// MARK: - Live strip
+
+/// The "live now" row under the strain hero: current heart rate and its zone, while the strap
+/// streams. A LEAF observer of `LiveState` — the 1 Hz heart-rate tick re-renders only this row.
+/// Renders nothing (zero height) when no live HR is arriving, so the screen is unchanged offline.
+private struct LedgerActivityLiveStrip: View {
+    @EnvironmentObject private var live: LiveState
+    let zoneSet: HRZoneSet
+
+    private static let dotDiameter: CGFloat = 6
+    private static let textSize: CGFloat = 12
+    private static let topGap: CGFloat = 12
+
+    var body: some View {
+        if live.connected, let hr = live.heartRate {
+            HStack(spacing: 7) {
+                Circle()
+                    .fill(Ledger.accentLiveHR)
+                    .frame(width: Self.dotDiameter, height: Self.dotDiameter)
+                Text(String(localized: "live \u{00B7} \u{2665} \(hr) bpm \u{00B7} zone \(zoneSet.zoneNumber(forBPM: Double(hr)))"))
+                    .font(LedgerType.label(Self.textSize, LedgerType.semibold))
+                    .foregroundStyle(Ledger.textSecondary)
+                    .monospacedDigit()
+            }
+            .padding(.top, Self.topGap)
+            .accessibilityElement(children: .combine)
+        }
     }
 }
 

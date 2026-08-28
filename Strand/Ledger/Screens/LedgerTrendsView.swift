@@ -137,11 +137,18 @@ private struct LedgerTrendsBlock: Identifiable {
     var id: String { key }
 }
 
+/// The THIS WEEK digest strip: trailing 7 days vs the 7 before, pre-formatted.
+private struct LedgerTrendsWeek {
+    var items: [LedgerStatStrip.Item]
+}
+
 /// The whole screen, resolved once per (days · range · Effort scale · Rest series) change.
 private struct LedgerTrendsModel {
     var blocks: [LedgerTrendsBlock] = []
     /// The MEANINGFUL CHANGE copy. Empty renders nothing — `LedgerCoachNote` self-hides.
     var note: String = ""
+    /// THIS WEEK vs last. nil (no scored day in the trailing 7) renders nothing.
+    var week: LedgerTrendsWeek?
 
     static let empty = LedgerTrendsModel()
 }
@@ -274,6 +281,10 @@ struct LedgerTrendsView: View {
                 blockLink(block, isLast: index == model.blocks.count - 1)
                     .padding(.top, index == 0 ? Self.firstBlockGap : Self.blockGap)
             }
+            if let week = model.week {
+                weekSection(week)
+                    .padding(.top, Self.noteGap)
+            }
             if !model.note.isEmpty {
                 // Spec §05.3 — mint left-rule, one per screen, copy from the window deltas.
                 LedgerCoachNote(title: String(localized: "Meaningful change"),
@@ -283,6 +294,29 @@ struct LedgerTrendsView: View {
             }
         }
     }
+
+    // MARK: 2b · THIS WEEK
+    //
+    // The digest read: the trailing 7 days against the 7 before them, as a stat strip — the week's
+    // narrative anchor under the long-view charts. Every figure is a plain mean/sum over
+    // `repo.days` (and the loaded Rest series), computed off-body in `makeModel` like everything
+    // else here; deltas colour by the metric's own polarity.
+
+    private func weekSection(_ week: LedgerTrendsWeek) -> some View {
+        VStack(alignment: .leading, spacing: 0) {
+            Rectangle()
+                .fill(Ledger.hairline)
+                .frame(height: Ledger.hairlineWidth)
+
+            Text(String(localized: "This week \u{00B7} vs last")).ledgerOverline()                .padding(.top, Self.weekOverlineTop)
+
+            // The strip's own top rule is off — this section's rule + overline already frame it.
+            LedgerStatStrip(week.items, showsTopRule: false, showsBottomRule: false)
+        }
+    }
+
+    /// `padding-top:14px` under the section rule — the shared section-header rhythm.
+    private static let weekOverlineTop: CGFloat = 14
 
     /// One TrendBlock wrapped in its value-based push. Spec §Tap Map — *"Trends · any TrendBlock →
     /// `TabRoute.metric(key)`"*. A VALUE push (not a closure link) is what lets a tab re-tap pop
@@ -617,7 +651,8 @@ private extension LedgerTrendsView {
                                    rhr: rhr, rhrDelta: rhrDelta,
                                    rhrShift: rhrShift,
                                    rhrShiftDate: shiftDateText(rhrShift, dayKeys: rhr.dayKeys),
-                                   strainElevated: strainElevated))
+                                   strainElevated: strainElevated),
+            week: weekDigest())
     }
 
     /// Is the resolved Effort window running above the personal Effort baseline? Uses
@@ -636,6 +671,63 @@ private extension LedgerTrendsView {
     // claims ("your strongest rise on record" and the like are deliberately NOT reproduced — spec
     // §01.6 bans fabricated pattern claims). When no delta resolves, the note is empty and
     // `LedgerCoachNote` renders nothing at all.
+
+    // MARK: THIS WEEK digest
+
+    /// The trailing 7 local days vs the 7 before them: recovery mean, sleep-score mean, total
+    /// Effort. Plain means/sums over the SAME rows the blocks plot; a metric with no reading in
+    /// the trailing week shows an em-dash rather than a guess, and a whole week with no scored
+    /// day returns nil so the section hides.
+    func weekDigest() -> LedgerTrendsWeek? {
+        let cal = Calendar.current
+        guard let weekAgo = cal.date(byAdding: .day, value: -6, to: Date()),
+              let twoWeeksAgo = cal.date(byAdding: .day, value: -13, to: Date()) else { return nil }
+        let thisKey = Repository.localDayKey(weekAgo)
+        let priorKey = Repository.localDayKey(twoWeeksAgo)
+
+        let thisWeek = repo.days.filter { $0.day >= thisKey }
+        let lastWeek = repo.days.filter { $0.day >= priorKey && $0.day < thisKey }
+        guard !thisWeek.isEmpty else { return nil }
+
+        func mean(_ rows: [DailyMetric], _ value: (DailyMetric) -> Double?) -> Double? {
+            let vals = rows.compactMap(value)
+            guard !vals.isEmpty else { return nil }
+            return vals.reduce(0, +) / Double(vals.count)
+        }
+
+        /// A cell: this week's value, delta vs last as the tinted suffix line's replacement —
+        /// `LedgerStatStrip.Item` has one value + label, so the delta rides the value's tint.
+        func item(_ current: Double?, _ prior: Double?, label: String,
+                  format: (Double) -> String, higherIsBetter: Bool?) -> LedgerStatStrip.Item {
+            guard let current else {
+                return .init(value: "\u{2014}", label: label, tint: Ledger.textTertiary)
+            }
+            var tint = Ledger.textPrimary
+            if let prior, let better = higherIsBetter, abs(current - prior) > 0.05 {
+                tint = ((current > prior) == better) ? Ledger.accentRecovery : Ledger.accentCaution
+            }
+            return .init(value: format(current), label: label, tint: tint)
+        }
+
+        let recovery = item(mean(thisWeek, { $0.recovery }), mean(lastWeek, { $0.recovery }),
+                            label: String(localized: "avg charge"),
+                            format: { "\(Int($0.rounded()))" }, higherIsBetter: true)
+        let sleep = item(mean(thisWeek, { sleepPerfByDay[$0.day] }),
+                         mean(lastWeek, { sleepPerfByDay[$0.day] }),
+                         label: String(localized: "avg sleep"),
+                         format: { "\(Int($0.rounded()))" }, higherIsBetter: true)
+        // Total Effort has no valence week-over-week (a rest week is not "worse") — neutral tint.
+        // Summed on the DISPLAY scale per day, because the stored→display mapping is not linear:
+        // converting a sum of stored values would print a number that is no day's arithmetic.
+        let strains = thisWeek.compactMap { $0.strain }
+        let strainSum = strains.map { UnitFormatter.effortValue($0, scale: effortScale) }.reduce(0, +)
+        let strain = LedgerStatStrip.Item(
+            value: strains.isEmpty ? "\u{2014}" : String(format: "%.1f", strainSum),
+            label: String(localized: "total effort"),
+            tint: strains.isEmpty ? Ledger.textTertiary : Ledger.textPrimary)
+
+        return LedgerTrendsWeek(items: [recovery, sleep, strain])
+    }
 
     func meaningfulChange(hrv: Resolved, hrvDelta: Double?,
                           hrvShift: Shift?, hrvShiftDate: String?,

@@ -127,6 +127,7 @@ struct LedgerMetricDetailView: View {
     init(metricKey: String, source: String?, backTitle: String = LedgerMetricDetailView.defaultBackTitle) {
         self.requestedKey = metricKey
         self.backTitle = backTitle
+        self._range = State(initialValue: Self.defaultRange(for: metricKey))
         if let source {
             self.metric = MetricCatalog.metric(key: metricKey, source: source)
                 ?? MetricCatalog.all.first { $0.key == metricKey }
@@ -164,8 +165,18 @@ struct LedgerMetricDetailView: View {
     // `window` and `correlations` are the memoized derivations `body` actually renders.
 
     /// The pill's stored selection. `.month` = the board's highlighted 30D chip, and the classic
-    /// screen's default.
+    /// screen's default. Weekly-cadence metrics open wider — see `defaultRange(for:)`.
     @State private var range: ExploreRange = .month
+
+    /// The keys the weekly `IntelligenceEngine` pass writes ONE point per week for. At that cadence
+    /// a 30-day window holds at most five points, so the detail opened looking almost empty; these
+    /// open at 90D, where the weekly rhythm actually reads as a line.
+    private static let weeklyCadenceKeys: Set<String> = ["fitness_age", "vitality", "body_age", "vo2max_est"]
+
+    /// `.quarter` for the weekly-cadence figures, the board's `.month` for everything else.
+    private static func defaultRange(for key: String) -> ExploreRange {
+        weeklyCadenceKeys.contains(key) ? .quarter : .month
+    }
     /// Full ascending series for this metric — ALL history.
     @State private var series: [(day: String, value: Double)] = []
     /// day → the RAW source id that supplied that day's value, for the readings table's provenance
