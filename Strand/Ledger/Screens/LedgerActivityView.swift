@@ -330,15 +330,9 @@ struct LedgerActivityView: View {
                 }
             }
 
-            Button { showLogSheet = true } label: {
-                Text(String(localized: "+ Log a session"))
-                    .font(LedgerType.label(Self.logButtonSize, LedgerType.regular))
-                    .foregroundStyle(Ledger.accentStrain)
-                    .padding(.vertical, Self.logButtonPadding)
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                    .contentShape(Rectangle())
-            }
-            .buttonStyle(.plain)
+            LedgerActivitySessionActions(textSize: Self.logButtonSize,
+                                         verticalPadding: Self.logButtonPadding,
+                                         onLogSession: { showLogSheet = true })
         }
     }
 
@@ -884,6 +878,76 @@ private struct LedgerActivityLiveStrip: View {
         }
         .padding(.top, Self.topGap)
         .accessibilityElement(children: .combine)
+    }
+}
+
+// MARK: - Session actions
+
+/// The row under the sessions list: **Start workout** (the strap-tracked live session — the same
+/// `StartWorkoutSheet` → `AppModel.startWorkout` → `LiveWorkoutView` flow the Live screen owns,
+/// reused wholesale) and **+ Log a session** (the manual entry the board specifies). While a workout
+/// is running the lead action becomes "Return to workout", reopening the in-exercise screen — the
+/// same convention the Today active-workout indicator follows.
+///
+/// A LEAF observer of `AppModel`/`LiveState` (for `activeWorkout` and the connection gate), keeping
+/// both live objects out of the screen root per the Ledger perf contract. Styling stays the
+/// section's text-button idiom — 12pt label in a domain colour, no filled buttons on the canvas.
+private struct LedgerActivitySessionActions: View {
+    @EnvironmentObject private var model: AppModel
+    @EnvironmentObject private var live: LiveState
+
+    let textSize: CGFloat
+    let verticalPadding: CGFloat
+    let onLogSession: () -> Void
+
+    /// Drives the shared sport picker (`workoutSelectionCover`), exactly as `LiveView` presents it.
+    @State private var showStartSport = false
+    /// The in-exercise screen. Opens automatically the moment a workout starts (#238), and from the
+    /// "Return to workout" action while one is running.
+    @State private var showLiveWorkout = false
+
+    private var workoutRunning: Bool { model.activeWorkout != nil }
+
+    var body: some View {
+        HStack(spacing: 22) {
+            Button {
+                if workoutRunning { showLiveWorkout = true } else { showStartSport = true }
+            } label: {
+                Text(workoutRunning
+                     ? String(localized: "\u{25CF} Return to workout")
+                     : String(localized: "\u{25B6} Start workout"))
+                    .font(LedgerType.label(textSize, LedgerType.semibold))
+                    .foregroundStyle(workoutRunning ? Ledger.accentLiveHR
+                                     : (live.connected ? Ledger.accentStrain : Ledger.textTertiary))
+                    .padding(.vertical, verticalPadding)
+                    .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            // Tracking needs the strap; a running workout must stay reachable regardless.
+            .disabled(!live.connected && !workoutRunning)
+
+            Button(action: onLogSession) {
+                Text(String(localized: "+ Log a session"))
+                    .font(LedgerType.label(textSize, LedgerType.regular))
+                    .foregroundStyle(Ledger.accentStrain)
+                    .padding(.vertical, verticalPadding)
+                    .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+
+            Spacer(minLength: 0)
+        }
+        // Open the in-exercise screen the moment the started workout lands — the picker only names
+        // the sport; `startWorkout` flips `activeWorkout`, and this is what presents the screen.
+        .onChangeCompat(of: workoutRunning) { running in if running { showLiveWorkout = true } }
+        .workoutSelectionCover(isPresented: $showStartSport) {
+            StartWorkoutSheet { name in model.startWorkout(sport: name) }
+        }
+        .sheet(isPresented: $showLiveWorkout) {
+            LiveWorkoutView(onClose: { showLiveWorkout = false })
+                .environmentObject(model)
+                .environmentObject(live)
+        }
     }
 }
 
