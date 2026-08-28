@@ -1,22 +1,14 @@
 import SwiftUI
 
-// MARK: - LedgerCoachNote — the left-ruled insight block
+// MARK: - LedgerCoachNote — the insight section
 //
-// Board: `NOOP Redesign.dc.html` — three instances, identical apart from the accent:
-//   Today   COACH             `border-left:2px solid #3EE6A8`
-//   Body    WATCHING          `border-left:2px solid #F2C14E`
-//   Trends  MEANINGFUL CHANGE `border-left:2px solid #3EE6A8`
-//
-// Transcribed verbatim:
-//
-//   block    border-left:2px solid <accent>; padding:2px 0 2px 14px
-//            (margin:16–18px 24px 22px — the screen owns those; this view owns the inner box)
-//   title    font-size:10.5px; font-weight:700; letter-spacing:2.4px; color:<accent>
-//   body     font-size:13.5px; line-height:1.55; color:#C9CFD8; margin-top:6px
-//
-// **NO BACKGROUND FILL.** Spec §Layout: *"Coach/insight blocks: 2px left rule in the domain accent,
-// no background fill, one per screen max."* A fill here would make it a card, which the cardinal
-// rule bans. The 2px rule is the entire chrome.
+// Board: `NOOP Redesign.dc.html` — three instances (Today COACH, Body WATCHING, Trends MEANINGFUL
+// CHANGE), each a 2px accent left rule beside a 13.5pt paragraph. That treatment is DELIBERATELY
+// NOT reproduced: the side-bar was chrome no other section had (it read as decoration, not
+// structure), and the paragraph competed with the data above it. The note now speaks the screens'
+// own section grammar — a 1px hairline, an overline row (the accent lives in the overline word and
+// the action value, where it carries meaning), and quiet 12pt secondary copy written to fit about
+// two lines. Still no background fill: a fill would make it a card, which the cardinal rule bans.
 //
 // ONE PER SCREEN, MAXIMUM — that is a screen-builder rule this view cannot enforce; it is stated
 // here so nobody stacks two.
@@ -41,17 +33,18 @@ public struct LedgerCoachNote: View {
 
     // MARK: Board constants
 
-    /// The gap between the rule and the copy — 14pt (`padding-left:14px`).
-    private static let rulePadding: CGFloat = 14
-    /// The block's own vertical padding — 2pt top and bottom (`padding:2px 0 2px 14px`).
-    private static let verticalPadding: CGFloat = 2
-    /// The gap between the overline and the body copy — 6pt (`margin-top:6px`).
+    /// The gap between the overline row and the body copy — 6pt.
     private static let titleGap: CGFloat = 6
 
-    /// The action row's label size and value size, and the gap above the row.
+    /// The action's label and value sizes — the value matches a row value, not a hero.
     private static let actionLabelSize: CGFloat = 10.5
-    private static let actionValueSize: CGFloat = 15
-    private static let actionGap: CGFloat = 10
+    private static let actionValueSize: CGFloat = 13
+    /// `padding-top:14px` under the section hairline — the shared section-header rhythm.
+    private static let overlineTop: CGFloat = 14
+    /// The copy — 12pt caption-weight secondary, tight line spacing: an aside under the data, not a
+    /// paragraph competing with it. Written to fit about two lines; the style keeps it quiet.
+    private static let bodySize: CGFloat = 12
+    private static let bodyLineSpacing: CGFloat = 3.5
 
     // MARK: Action row
 
@@ -98,38 +91,42 @@ public struct LedgerCoachNote: View {
             // "Renders nothing when quiet" — no rule, no reserved height.
             EmptyView()
         } else {
-            HStack(alignment: .top, spacing: Self.rulePadding) {
-                // The 2px left rule, matched to the content's height.
+            // The screens' own section grammar — a 1px hairline over an overline row — instead of
+            // the board's 2px accent side-bar, which read as a decoration no other section had.
+            // The accent survives where it carries meaning: the overline word and the action value.
+            VStack(alignment: .leading, spacing: 0) {
                 Rectangle()
-                    .fill(accent)
-                    .frame(width: Ledger.coachRuleWidth)
+                    .fill(Ledger.hairline)
+                    .frame(height: Ledger.hairlineWidth)
 
-                VStack(alignment: .leading, spacing: Self.titleGap) {
+                HStack(alignment: .firstTextBaseline) {
                     Text(title)
                         .ledgerOverline(accent)
-                    Text(message)
-                        .ledgerCoachBody()
-                        .fixedSize(horizontal: false, vertical: true)
-                        .frame(maxWidth: .infinity, alignment: .leading)
-
                     if let action {
-                        HStack(alignment: .firstTextBaseline, spacing: 8) {
+                        Spacer(minLength: Ledger.rowGap)
+                        HStack(alignment: .firstTextBaseline, spacing: 7) {
                             Text(action.label)
                                 .font(LedgerType.label(Self.actionLabelSize, LedgerType.bold))
                                 .tracking(2.4)
                                 .textCase(.uppercase)
-                                .foregroundStyle(accent)
+                                .foregroundStyle(Ledger.textTertiary)
                             Text(action.value)
                                 .font(LedgerType.numeral(Self.actionValueSize, LedgerType.semibold))
-                                .foregroundStyle(Ledger.textPrimary)
+                                .foregroundStyle(accent)
                                 .monospacedDigit()
                         }
-                        .padding(.top, Self.actionGap - Self.titleGap)
                     }
                 }
-                .padding(.vertical, Self.verticalPadding)
+                .padding(.top, Self.overlineTop)
+
+                Text(message)
+                    .font(LedgerType.label(Self.bodySize, LedgerType.regular))
+                    .foregroundStyle(Ledger.textSecondary)
+                    .lineSpacing(Self.bodyLineSpacing)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .padding(.top, Self.titleGap)
             }
-            .fixedSize(horizontal: false, vertical: true)
             .accessibilityElement(children: .combine)
         }
     }

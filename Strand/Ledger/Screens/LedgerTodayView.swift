@@ -1179,7 +1179,7 @@ private struct LedgerTodayModel {
             let lower = LedgerTodayLoad.optimalText(Double(optimal.lowerBound), scale: scale)
             let upper = LedgerTodayLoad.optimalText(Double(optimal.upperBound), scale: scale)
             parts.append(String(localized:
-                "Charge \(Int(recovery.rounded())) puts today's optimal strain at \(lower)–\(upper)."))
+                "Optimal strain \(lower)–\(upper) on charge \(Int(recovery.rounded()))."))
         }
 
         // The sleep-debt read: a stated balance, then advice SIZED TO THE DEBT. Three honest tiers
@@ -1194,27 +1194,28 @@ private struct LedgerTodayModel {
                 : String(localized: "the last \(nights) nights")
             if ledger.magnitudeMin < SleepDebt.onTargetBandMin {
                 parts.append(String(localized:
-                    "You're roughly on top of your sleep across \(span). Slept minutes balance out against your need."))
+                    "Sleep is balanced across \(span)."))
             } else if ledger.isDebt {
                 let debt = ledger.magnitudeMin
                 let debtText = CoupledView.hoursMinutes(debt)
                 if debt <= Self.smallDebtMin {
                     parts.append(String(localized:
-                        "You're carrying about \(debtText) of sleep debt over \(span) — one early night covers it."))
+                        "\(debtText) of sleep debt — one early night covers it."))
                     tonight = needMin + debt
                 } else if debt <= Self.planDebtMin {
                     let planNights = max(2, Int((debt / Self.catchUpMin).rounded(.up)))
                     parts.append(String(localized:
-                        "You've banked about \(debtText) of sleep debt over \(span). An extra hour a night repays it in about \(planNights) nights."))
+                        "\(debtText) of sleep debt — an extra hour a night repays it in about \(planNights) nights."))
                     tonight = needMin + Self.catchUpMin
                 } else {
+                    // "An extra hour tonight" lives in the TONIGHT row — not repeated here.
                     parts.append(String(localized:
-                        "You've banked about \(debtText) of sleep debt over \(span) — more than a few nights can fix, and chasing it all at once doesn't work. The ledger only weighs your last 14 nights, so start with an extra hour tonight and let consistency do the rest."))
+                        "\(debtText) of sleep debt — too much to chase at once; consistency beats catch-up."))
                     tonight = needMin + Self.catchUpMin
                 }
             } else {
                 parts.append(String(localized:
-                    "You're carrying about \(CoupledView.hoursMinutes(ledger.magnitudeMin)) of surplus over \(span). You've slept past your need on balance. Nicely ahead."))
+                    "\(CoupledView.hoursMinutes(ledger.magnitudeMin)) of sleep surplus over \(span) — nicely ahead."))
             }
         }
 
