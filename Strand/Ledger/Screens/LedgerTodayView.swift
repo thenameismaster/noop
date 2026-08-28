@@ -462,7 +462,10 @@ struct LedgerTodayView: View {
         if !model.coach.isEmpty {
             LedgerCoachNote(title: String(localized: "COACH"),
                             message: model.coach,
-                            accent: Ledger.accentRecovery)
+                            accent: Ledger.accentRecovery,
+                            action: model.coachTonight.map {
+                                .init(label: String(localized: "Tonight"), value: $0)
+                            })
                 .padding(.horizontal, Ledger.pageMargin)
                 .padding(.top, Ledger.sectionGapWide)
                 .padding(.bottom, 22)
@@ -646,10 +649,12 @@ struct LedgerTodayView: View {
         let load = LedgerTodayLoad(strain: day?.strain, optimal: optimal, scale: effortScale, bars: bars)
 
         // ── 6 · COACH ───────────────────────────────────────────────────────────────────
+        let needMin = repo.importedSleep[dayKey]?.needMin ?? SleepModel.sleepNeedMin(days: days)
         let coach = LedgerTodayModel.coach(recovery: charge.pct,
                                            optimal: optimal,
                                            ledger: sleepModel?.sleepDebtLedger,
-                                           scale: effortScale)
+                                           scale: effortScale,
+                                           needMin: needMin)
 
         model = LedgerTodayModel(
             chargeDisplay: charge,
@@ -658,10 +663,10 @@ struct LedgerTodayView: View {
             whyRows: whyRows,
             lastNight: LedgerTodayLastNight(night: night,
                                             score: sleepScore,
-                                            needMin: repo.importedSleep[dayKey]?.needMin
-                                                ?? SleepModel.sleepNeedMin(days: days)),
+                                            needMin: needMin),
             load: load,
-            coach: coach)
+            coach: coach.message,
+            coachTonight: coach.tonight)
     }
 }
 
@@ -849,6 +854,8 @@ private struct LedgerTodayModel {
     var lastNight = LedgerTodayLastNight()
     var load = LedgerTodayLoad()
     var coach: String = ""
+    /// Tonight's asleep target for the coach note's action row. nil = no row.
+    var coachTonight: String?
 
     /// The arc's spoken label — the number, the band word, and the synthesis.
     var heroAccessibility: String {
@@ -1145,12 +1152,28 @@ private struct LedgerTodayModel {
 
     // MARK: Coach (spec §01.6 — optimal-strain band + sleep-debt read, no fabricated pattern claims)
 
+    /// The coach output: the paragraph, plus an optional concrete "TONIGHT · <target> asleep" row.
+    struct CoachAdvice {
+        var message: String = ""
+        /// Tonight's asleep target, pre-formatted ("≈ 9h 10m asleep"). nil = no action row.
+        var tonight: String?
+    }
+
+    /// The realistic nightly catch-up. An hour is what a person can actually add to a night; the
+    /// old flat 30 min stretched a big debt into a month-long promise nobody keeps.
+    private static let catchUpMin: Double = 60
+    /// Debt one early night can cover.
+    private static let smallDebtMin: Double = 90
+    /// Debt a same-week plan can honestly promise to clear (5 nights × the catch-up).
+    private static let planDebtMin: Double = 300
+
     static func coach(recovery: Double?,
                       optimal: ClosedRange<Int>?,
                       ledger: SleepDebtLedger?,
                       scale: EffortScale,
-                      now: Date = Date()) -> String {
+                      needMin: Double) -> CoachAdvice {
         var parts: [String] = []
+        var tonight: Double?
 
         if let recovery, let optimal {
             let lower = LedgerTodayLoad.optimalText(Double(optimal.lowerBound), scale: scale)
@@ -1159,8 +1182,11 @@ private struct LedgerTodayModel {
                 "Charge \(Int(recovery.rounded())) puts today's optimal strain at \(lower)–\(upper)."))
         }
 
-        // The sleep-debt read, in the existing ledger's own vocabulary — a stated balance, never a
-        // claimed pattern.
+        // The sleep-debt read: a stated balance, then advice SIZED TO THE DEBT. Three honest tiers
+        // instead of one flat rate — a small debt is one early night, a moderate one is a same-week
+        // plan, and a large one is explicitly NOT promised away, because the ledger only weighs the
+        // last 14 nights: old debt ages out of the window, so steady catch-up beats a month-long
+        // repayment schedule nobody keeps (and that the rolling window would not even record).
         if let ledger, ledger.nightCount > 0 {
             let nights = ledger.nightCount
             let span = nights == 1
@@ -1170,21 +1196,21 @@ private struct LedgerTodayModel {
                 parts.append(String(localized:
                     "You're roughly on top of your sleep across \(span). Slept minutes balance out against your need."))
             } else if ledger.isDebt {
-                // The stated balance, then a CONCRETE payoff plan — deterministic arithmetic on the
-                // ledger's own figure (debt ÷ 30 extra minutes a night), never a claimed pattern.
-                // Beyond ~45 nights a dated promise stops being honest advice, so the plan falls
-                // back to the original open-ended sentence there.
-                let balance = String(localized:
-                    "You've banked about \(CoupledView.hoursMinutes(ledger.magnitudeMin)) of sleep debt over \(span). Surplus nights count back against it.")
-                let nightsToClear = Int((ledger.magnitudeMin / 30.0).rounded(.up))
-                if nightsToClear >= 1, nightsToClear <= 45,
-                   let clearDate = Calendar.current.date(byAdding: .day, value: nightsToClear, to: now) {
-                    let dateText = Self.payoffDateFormatter.string(from: clearDate)
-                    parts.append(balance + " " + String(localized:
-                        "An extra 30 minutes a night clears it around \(dateText)."))
+                let debt = ledger.magnitudeMin
+                let debtText = CoupledView.hoursMinutes(debt)
+                if debt <= Self.smallDebtMin {
+                    parts.append(String(localized:
+                        "You're carrying about \(debtText) of sleep debt over \(span) — one early night covers it."))
+                    tonight = needMin + debt
+                } else if debt <= Self.planDebtMin {
+                    let planNights = max(2, Int((debt / Self.catchUpMin).rounded(.up)))
+                    parts.append(String(localized:
+                        "You've banked about \(debtText) of sleep debt over \(span). An extra hour a night repays it in about \(planNights) nights."))
+                    tonight = needMin + Self.catchUpMin
                 } else {
-                    parts.append(balance + " " + String(localized:
-                        "An earlier night or two would clear it."))
+                    parts.append(String(localized:
+                        "You've banked about \(debtText) of sleep debt over \(span) — more than a few nights can fix, and chasing it all at once doesn't work. The ledger only weighs your last 14 nights, so start with an extra hour tonight and let consistency do the rest."))
+                    tonight = needMin + Self.catchUpMin
                 }
             } else {
                 parts.append(String(localized:
@@ -1192,15 +1218,16 @@ private struct LedgerTodayModel {
             }
         }
 
-        return parts.joined(separator: " ")
-    }
+        // The action row states an ASLEEP target: need + tonight's catch-up, capped at 10 h — past
+        // that a target reads as parody, not advice. Skipped when the app holds no need to anchor it.
+        var tonightText: String?
+        if let tonight, needMin > 0 {
+            let capped = min(tonight, 600)
+            tonightText = String(localized: "\u{2248} \(CoupledView.hoursMinutes(capped)) asleep")
+        }
 
-    /// "Sep 12" for the payoff plan's clear date, locale-aware via the `MMMd` template.
-    static let payoffDateFormatter: DateFormatter = {
-        let f = DateFormatter()
-        f.setLocalizedDateFormatFromTemplate("MMMd")
-        return f
-    }()
+        return CoachAdvice(message: parts.joined(separator: " "), tonight: tonightText)
+    }
 
     // MARK: Formatting helpers
 

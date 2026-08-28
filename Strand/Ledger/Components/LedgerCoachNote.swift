@@ -48,21 +48,47 @@ public struct LedgerCoachNote: View {
     /// The gap between the overline and the body copy — 6pt (`margin-top:6px`).
     private static let titleGap: CGFloat = 6
 
+    /// The action row's label size and value size, and the gap above the row.
+    private static let actionLabelSize: CGFloat = 10.5
+    private static let actionValueSize: CGFloat = 15
+    private static let actionGap: CGFloat = 10
+
+    // MARK: Action row
+
+    /// One concrete, tonight-sized instruction under the paragraph — a small accent label and a
+    /// numeral-weight value ("TONIGHT · 8:40 in bed"). Optional; the boards' notes carry none, so
+    /// nothing changes for a caller that does not pass one.
+    public struct Action {
+        /// The row's label ("TONIGHT"). Uppercased by the style.
+        public let label: String
+        /// The row's value ("8:40 in bed"), rendered in the numeral face.
+        public let value: String
+
+        public init(label: String, value: String) {
+            self.label = label
+            self.value = value
+        }
+    }
+
     // MARK: Stored
 
     private let title: String
     private let message: String
     private let accent: Color
+    private let action: Action?
 
     /// - Parameters:
     ///   - title: the accent overline, e.g. `"COACH"` / `"WATCHING"` / `"MEANINGFUL CHANGE"`.
     ///     Uppercased by the style; pass it in whatever case reads best in source.
     ///   - message: one paragraph of deterministic copy. Blank or whitespace-only renders nothing.
     ///   - accent: the domain accent for both the rule and the overline.
-    public init(title: String, message: String, accent: Color = Ledger.accentRecovery) {
+    ///   - action: an optional concrete instruction row beneath the paragraph. Default `nil`.
+    public init(title: String, message: String, accent: Color = Ledger.accentRecovery,
+                action: Action? = nil) {
         self.title = title
         self.message = message
         self.accent = accent
+        self.action = action
     }
 
     // MARK: Body
@@ -85,6 +111,21 @@ public struct LedgerCoachNote: View {
                         .ledgerCoachBody()
                         .fixedSize(horizontal: false, vertical: true)
                         .frame(maxWidth: .infinity, alignment: .leading)
+
+                    if let action {
+                        HStack(alignment: .firstTextBaseline, spacing: 8) {
+                            Text(action.label)
+                                .font(LedgerType.label(Self.actionLabelSize, LedgerType.bold))
+                                .tracking(2.4)
+                                .textCase(.uppercase)
+                                .foregroundStyle(accent)
+                            Text(action.value)
+                                .font(LedgerType.numeral(Self.actionValueSize, LedgerType.semibold))
+                                .foregroundStyle(Ledger.textPrimary)
+                                .monospacedDigit()
+                        }
+                        .padding(.top, Self.actionGap - Self.titleGap)
+                    }
                 }
                 .padding(.vertical, Self.verticalPadding)
             }

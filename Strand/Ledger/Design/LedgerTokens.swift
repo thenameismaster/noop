@@ -267,9 +267,14 @@ public enum Ledger {
     /// Arc sweep — **270°** (an open arc, not a ring).
     public static let arcSweepDegrees: Double = 270
 
-    /// Arc start angle — **125°**, measured clockwise from 3 o'clock, per the board's
-    /// `transform="rotate(125 …)"`.
-    public static let arcStartDegrees: Double = 125
+    /// Arc start angle — **135°**, measured clockwise from 3 o'clock.
+    ///
+    /// The board says `transform="rotate(125 …)"`, but 125° + a 270° sweep ends at 35°, which
+    /// centres the 90° opening on 80° — the whole gauge sits rotated 10°, the right end stops
+    /// visibly early, and the 12-o'clock index tick misses the arc's true midpoint (260°). 135°
+    /// symmetrises it: the opening centres on the bottom (90°), both ends sit at equal heights,
+    /// and the tick lands exactly mid-sweep. A deliberate correction of the board, not a drift.
+    public static let arcStartDegrees: Double = 135
 
     /// The Body header's recovery mini-ring — 56pt across, 5pt stroke.
     public static let miniRingDiameter: CGFloat = 56
