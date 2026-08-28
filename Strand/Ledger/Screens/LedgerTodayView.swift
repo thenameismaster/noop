@@ -652,8 +652,9 @@ struct LedgerTodayView: View {
         let needMin = repo.importedSleep[dayKey]?.needMin ?? SleepModel.sleepNeedMin(days: days)
         let coach = LedgerTodayModel.coach(recovery: charge.pct,
                                            optimal: optimal,
+                                           strain21: day?.strain.map { UnitFormatter.effortValue($0, scale: .whoop) },
+                                           recentLoad: LedgerTodayModel.recentLoad(days: days),
                                            ledger: sleepModel?.sleepDebtLedger,
-                                           scale: effortScale,
                                            needMin: needMin)
 
         model = LedgerTodayModel(
@@ -1167,55 +1168,92 @@ private struct LedgerTodayModel {
     /// Debt a same-week plan can honestly promise to clear (5 nights × the catch-up).
     private static let planDebtMin: Double = 300
 
+    /// How the last week's training compares to the month's norm, resolved by the caller from the
+    /// same rolling-load figures the Activity screen plots. `.unknown` says nothing about it.
+    enum RecentLoad {
+        case light, typical, heavy, unknown
+    }
+
+    /// The 7-day mean strain against the 28-day mean, banded ±15% — the same acute-vs-chronic
+    /// comparison the Activity screen's TRAINING LOAD chart draws, reduced to a word. `.unknown`
+    /// below 5 scored days in the week or 14 in the month, so a sparse history claims nothing.
+    static func recentLoad(days: [DailyMetric]) -> RecentLoad {
+        let sorted = days.sorted { $0.day < $1.day }
+        let week = sorted.suffix(7).compactMap { $0.strain }
+        let month = sorted.suffix(28).compactMap { $0.strain }
+        guard week.count >= 5, month.count >= 14 else { return .unknown }
+        let weekMean = week.reduce(0, +) / Double(week.count)
+        let monthMean = month.reduce(0, +) / Double(month.count)
+        guard monthMean > 0 else { return .unknown }
+        let ratio = weekMean / monthMean
+        if ratio < 0.85 { return .light }
+        if ratio > 1.15 { return .heavy }
+        return .typical
+    }
+
+    /// Deterministic, HUMANE copy: the verdicts come from the bands the app already computes (the
+    /// recovery band, today's strain against the optimal band, the 7d-vs-28d load ratio, the debt
+    /// tiers), but the prose states the CONCLUSION, not the inputs. The numbers stay on the screen's
+    /// data sections where they belong; the one number the note carries is the TONIGHT target. No
+    /// em-dashes, no ranges, no scores.
     static func coach(recovery: Double?,
                       optimal: ClosedRange<Int>?,
+                      strain21: Double?,
+                      recentLoad: RecentLoad,
                       ledger: SleepDebtLedger?,
-                      scale: EffortScale,
                       needMin: Double) -> CoachAdvice {
         var parts: [String] = []
         var tonight: Double?
 
-        if let recovery, let optimal {
-            let lower = LedgerTodayLoad.optimalText(Double(optimal.lowerBound), scale: scale)
-            let upper = LedgerTodayLoad.optimalText(Double(optimal.upperBound), scale: scale)
-            parts.append(String(localized:
-                "Optimal strain \(lower)–\(upper) on charge \(Int(recovery.rounded()))."))
+        // ── The effort verdict ─────────────────────────────────────────────────────────
+        if let recovery {
+            let band = LedgerRecoveryBand.band(for: recovery)
+            // Already past the day's band: the verdict is "stop", whatever the charge says.
+            if let optimal, let strain21, strain21 > Double(optimal.upperBound) {
+                parts.append(String(localized:
+                    "You've already put in a big day, let it wind down."))
+            } else {
+                switch band {
+                case .depleted, .low:
+                    parts.append(recentLoad == .heavy
+                        ? String(localized: "You've been training hard and your body is asking for a break. Keep today easy.")
+                        : String(localized: "Your body is asking for an easy day. Keep it light."))
+                case .moderate:
+                    parts.append(String(localized:
+                        "You're set for a steady day. Move, but no need to push."))
+                case .primed, .peak:
+                    parts.append(recentLoad == .light
+                        ? String(localized: "Good day to go hard. Your training has been light lately and your body is ready for more.")
+                        : String(localized: "Green light. A hard session will land well today."))
+                }
+            }
         }
 
-        // The sleep-debt read: a stated balance, then advice SIZED TO THE DEBT. Three honest tiers
-        // instead of one flat rate — a small debt is one early night, a moderate one is a same-week
-        // plan, and a large one is explicitly NOT promised away, because the ledger only weighs the
-        // last 14 nights: old debt ages out of the window, so steady catch-up beats a month-long
-        // repayment schedule nobody keeps (and that the rolling window would not even record).
+        // ── The sleep verdict, sized to the debt ───────────────────────────────────────
+        // Naps are CREDITED against debt (SleepDebt.creditedSleepMin adds recorded nap minutes to
+        // the night), so suggesting one is honest advice, not a platitude.
         if let ledger, ledger.nightCount > 0 {
-            let nights = ledger.nightCount
-            let span = nights == 1
-                ? String(localized: "the last night")
-                : String(localized: "the last \(nights) nights")
             if ledger.magnitudeMin < SleepDebt.onTargetBandMin {
                 parts.append(String(localized:
-                    "Sleep is balanced across \(span)."))
+                    "Sleep has been steady. Keep the rhythm going."))
             } else if ledger.isDebt {
                 let debt = ledger.magnitudeMin
-                let debtText = CoupledView.hoursMinutes(debt)
                 if debt <= Self.smallDebtMin {
                     parts.append(String(localized:
-                        "\(debtText) of sleep debt — one early night covers it."))
+                        "You're a touch short on sleep. One early night sorts it."))
                     tonight = needMin + debt
                 } else if debt <= Self.planDebtMin {
-                    let planNights = max(2, Int((debt / Self.catchUpMin).rounded(.up)))
                     parts.append(String(localized:
-                        "\(debtText) of sleep debt — an extra hour a night repays it in about \(planNights) nights."))
+                        "You're running short on sleep. Earlier nights bring it back, and a nap counts too."))
                     tonight = needMin + Self.catchUpMin
                 } else {
-                    // "An extra hour tonight" lives in the TONIGHT row — not repeated here.
                     parts.append(String(localized:
-                        "\(debtText) of sleep debt — too much to chase at once; consistency beats catch-up."))
+                        "Sleep debt has piled up. Keep bedtimes earlier this week, and a nap helps too."))
                     tonight = needMin + Self.catchUpMin
                 }
             } else {
                 parts.append(String(localized:
-                    "\(CoupledView.hoursMinutes(ledger.magnitudeMin)) of sleep surplus over \(span) — nicely ahead."))
+                    "You're ahead on sleep, and it shows."))
             }
         }
 
