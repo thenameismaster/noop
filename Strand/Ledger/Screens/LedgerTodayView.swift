@@ -705,8 +705,11 @@ private struct LedgerTodaySyncStatus: View {
     private var caption: String {
         var parts: [String] = []
 
+        // The heart-rate part deliberately carries NO heart glyph: U+2665 renders as the red emoji
+        // heart on iOS, which shouted from a caption whose whole job is to be quiet. The bpm suffix
+        // says what the number is; the caption stays tertiary grey end to end.
         if live.connected, let hr = live.heartRate {
-            parts.append(String(localized: "\u{2665} \(hr)"))
+            parts.append(String(localized: "\(hr) bpm"))
         }
 
         if live.backfilling {

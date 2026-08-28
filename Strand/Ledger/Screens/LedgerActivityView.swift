@@ -853,12 +853,12 @@ private struct LedgerActivityLiveStrip: View {
     var body: some View {
         Group {
             if live.connected, let hr = live.heartRate {
-                row(String(localized: "live \u{00B7} \u{2665} \(hr) bpm \u{00B7} zone \(zoneSet.zoneNumber(forBPM: Double(hr)))"),
-                    dot: Ledger.accentLiveHR, text: Ledger.textSecondary)
+                row(String(localized: "live \u{00B7} \(hr) bpm \u{00B7} zone \(zoneSet.zoneNumber(forBPM: Double(hr)))"),
+                    text: Ledger.textSecondary)
             } else if live.connected {
                 // Armed but no sample yet (the strap takes a few seconds to answer the arm).
                 row(String(localized: "live \u{00B7} starting\u{2026}"),
-                    dot: Ledger.textTertiary, text: Ledger.textTertiary)
+                    text: Ledger.textTertiary)
             }
         }
         .onAppear { model.startRealtimeHR() }
@@ -866,11 +866,14 @@ private struct LedgerActivityLiveStrip: View {
         .onChangeCompat(of: live.connectSettled) { _ in model.rearmRealtimeIfWanted() }
     }
 
-    private func row(_ text: String, dot: Color, text textColor: Color) -> some View {
+    /// A quiet grey heartbeat glyph leads the row — deliberately NOT the red live-HR dot or a heart
+    /// emoji (U+2665 renders as the red emoji heart), which both shouted on a strip meant to be
+    /// ambient. Grey chrome, meaning in the words.
+    private func row(_ text: String, text textColor: Color) -> some View {
         HStack(spacing: 7) {
-            Circle()
-                .fill(dot)
-                .frame(width: Self.dotDiameter, height: Self.dotDiameter)
+            Image(systemName: "waveform.path.ecg")
+                .font(.system(size: Self.textSize, weight: .regular))
+                .foregroundStyle(Ledger.textTertiary)
             Text(text)
                 .font(LedgerType.label(Self.textSize, LedgerType.semibold))
                 .foregroundStyle(textColor)
