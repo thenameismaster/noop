@@ -1041,24 +1041,7 @@ private struct LedgerSleepRender {
     /// asks for. Returns nil under a full fortnight of onsets, in which case the caption falls back
     /// to the consistency score's own typical.
     private static func bedtimeDriftMinutes(_ sleeps: [CachedSleepSession]) -> Double? {
-        let window = SleepDebt.defaultWindowNights
-        guard sleeps.count >= window else { return nil }
-        let calendar = Calendar.current
-        func bedMinutes(_ session: CachedSleepSession) -> Double {
-            let date = Date(timeIntervalSince1970: TimeInterval(session.effectiveStartTs))
-            let components = calendar.dateComponents([.hour, .minute], from: date)
-            var minutes = Double((components.hour ?? 0) * 60 + (components.minute ?? 0))
-            if minutes < 12 * 60 { minutes += 24 * 60 }   // wrap evening onsets into one scale
-            return minutes
-        }
-        let recent = sleeps.suffix(window).map(bedMinutes)
-        let half = recent.count / 2
-        let previous = Array(recent.prefix(half))
-        let latest = Array(recent.suffix(recent.count - half))
-        guard !previous.isEmpty, !latest.isEmpty else { return nil }
-        let previousMean = previous.reduce(0, +) / Double(previous.count)
-        let latestMean = latest.reduce(0, +) / Double(latest.count)
-        return latestMean - previousMean
+        LedgerSleepSignals.bedtimeDriftMinutes(sleeps)
     }
 
     private static let dayKeyParser: DateFormatter = {
@@ -1081,4 +1064,40 @@ private struct LedgerSleepRender {
         formatter.setLocalizedDateFormatFromTemplate("jmm")
         return formatter
     }()
+}
+
+// MARK: - Shared sleep signals
+
+/// Sleep-rhythm reads shared between the Sleep screen (the consistency caption) and the Today
+/// coach (the bedtime-drift verdict). One canonical implementation so the two can never disagree
+/// about whether a bedtime is drifting.
+enum LedgerSleepSignals {
+
+    /// Recent-half mean bedtime minus earlier-half mean, in minutes, over the debt window's nights.
+    /// Positive = drifting LATER. `nil` below a full window — a short history claims no drift.
+    /// Evening onsets wrap past midnight into one scale so 23:30 and 00:30 compare sanely.
+    static func bedtimeDriftMinutes(_ sleeps: [CachedSleepSession]) -> Double? {
+        let window = SleepDebt.defaultWindowNights
+        guard sleeps.count >= window else { return nil }
+        let calendar = Calendar.current
+        func bedMinutes(_ session: CachedSleepSession) -> Double {
+            let date = Date(timeIntervalSince1970: TimeInterval(session.effectiveStartTs))
+            let components = calendar.dateComponents([.hour, .minute], from: date)
+            var minutes = Double((components.hour ?? 0) * 60 + (components.minute ?? 0))
+            if minutes < 12 * 60 { minutes += 24 * 60 }   // wrap evening onsets into one scale
+            return minutes
+        }
+        let recent = sleeps.suffix(window).map(bedMinutes)
+        let half = recent.count / 2
+        let previous = Array(recent.prefix(half))
+        let latest = Array(recent.suffix(recent.count - half))
+        guard !previous.isEmpty, !latest.isEmpty else { return nil }
+        let previousMean = previous.reduce(0, +) / Double(previous.count)
+        let latestMean = latest.reduce(0, +) / Double(latest.count)
+        return latestMean - previousMean
+    }
+
+    /// The steady band — below this magnitude a drift is noise, not a signal. The same cut the
+    /// Sleep screen's caption uses.
+    static var driftSteadyBandMin: Double { SleepDebt.onTargetBandMin }
 }

@@ -459,13 +459,10 @@ struct LedgerTodayView: View {
 
     @ViewBuilder
     private var coachSection: some View {
-        if !model.coach.isEmpty {
-            LedgerCoachNote(title: String(localized: "COACH"),
-                            message: model.coach,
-                            accent: Ledger.accentRecovery,
-                            action: model.coachTonight.map {
-                                .init(label: String(localized: "Tonight"), value: $0)
-                            })
+        if model.coachEffort != nil || model.coachSleep != nil {
+            LedgerTodayCoachNote(effort: model.coachEffort,
+                                 sleep: model.coachSleep,
+                                 tonight: model.coachTonight)
                 .padding(.horizontal, Ledger.pageMargin)
                 .padding(.top, Ledger.sectionGapWide)
                 .padding(.bottom, 22)
@@ -655,6 +652,7 @@ struct LedgerTodayView: View {
                                            strain21: day?.strain.map { UnitFormatter.effortValue($0, scale: .whoop) },
                                            recentLoad: LedgerTodayModel.recentLoad(days: days),
                                            ledger: sleepModel?.sleepDebtLedger,
+                                           bedtimeDriftMin: LedgerSleepSignals.bedtimeDriftMinutes(repo.sleeps),
                                            needMin: needMin)
 
         model = LedgerTodayModel(
@@ -666,7 +664,8 @@ struct LedgerTodayView: View {
                                             score: sleepScore,
                                             needMin: needMin),
             load: load,
-            coach: coach.message,
+            coachEffort: coach.effort,
+            coachSleep: coach.sleep,
             coachTonight: coach.tonight)
     }
 }
@@ -854,7 +853,10 @@ private struct LedgerTodayModel {
     var whyRows: [LedgerTodayWhyRow] = []
     var lastNight = LedgerTodayLastNight()
     var load = LedgerTodayLoad()
-    var coach: String = ""
+    /// The coach's effort verdict. Kept separate from `coachSleep` so the rendering leaf can swap
+    /// it for the illness watch's verdict without touching the sleep sentence.
+    var coachEffort: String?
+    var coachSleep: String?
     /// Tonight's asleep target for the coach note's action row. nil = no row.
     var coachTonight: String?
 
@@ -1153,9 +1155,12 @@ private struct LedgerTodayModel {
 
     // MARK: Coach (spec §01.6 — optimal-strain band + sleep-debt read, no fabricated pattern claims)
 
-    /// The coach output: the paragraph, plus an optional concrete "TONIGHT · <target> asleep" row.
+    /// The coach output: the effort and sleep verdicts (kept SEPARATE so the rendering leaf can
+    /// swap the effort sentence for the illness watch's without re-deriving the sleep one), plus an
+    /// optional concrete "TONIGHT · <target> asleep" row.
     struct CoachAdvice {
-        var message: String = ""
+        var effort: String?
+        var sleep: String?
         /// Tonight's asleep target, pre-formatted ("≈ 9h 10m asleep"). nil = no action row.
         var tonight: String?
     }
@@ -1201,8 +1206,10 @@ private struct LedgerTodayModel {
                       strain21: Double?,
                       recentLoad: RecentLoad,
                       ledger: SleepDebtLedger?,
+                      bedtimeDriftMin: Double?,
                       needMin: Double) -> CoachAdvice {
-        var parts: [String] = []
+        var effort: String?
+        var sleep: String?
         var tonight: Double?
 
         // ── The effort verdict ─────────────────────────────────────────────────────────
@@ -1210,21 +1217,21 @@ private struct LedgerTodayModel {
             let band = LedgerRecoveryBand.band(for: recovery)
             // Already past the day's band: the verdict is "stop", whatever the charge says.
             if let optimal, let strain21, strain21 > Double(optimal.upperBound) {
-                parts.append(String(localized:
-                    "You've already put in a big day, let it wind down."))
+                effort = String(localized:
+                    "You've already put in a big day, let it wind down.")
             } else {
                 switch band {
                 case .depleted, .low:
-                    parts.append(recentLoad == .heavy
+                    effort = recentLoad == .heavy
                         ? String(localized: "You've been training hard and your body is asking for a break. Keep today easy.")
-                        : String(localized: "Your body is asking for an easy day. Keep it light."))
+                        : String(localized: "Your body is asking for an easy day. Keep it light.")
                 case .moderate:
-                    parts.append(String(localized:
-                        "You're set for a steady day. Move, but no need to push."))
+                    effort = String(localized:
+                        "You're set for a steady day. Move, but no need to push.")
                 case .primed, .peak:
-                    parts.append(recentLoad == .light
+                    effort = recentLoad == .light
                         ? String(localized: "Good day to go hard. Your training has been light lately and your body is ready for more.")
-                        : String(localized: "Green light. A hard session will land well today."))
+                        : String(localized: "Green light. A hard session will land well today.")
                 }
             }
         }
@@ -1232,28 +1239,34 @@ private struct LedgerTodayModel {
         // ── The sleep verdict, sized to the debt ───────────────────────────────────────
         // Naps are CREDITED against debt (SleepDebt.creditedSleepMin adds recorded nap minutes to
         // the night), so suggesting one is honest advice, not a platitude.
+        // Bedtime drift joins the verdict only when it is a real signal: later than the steady
+        // band (the same cut the Sleep screen's caption uses). An earlier drift is never nagged.
+        let driftingLater = (bedtimeDriftMin ?? 0) >= LedgerSleepSignals.driftSteadyBandMin
         if let ledger, ledger.nightCount > 0 {
             if ledger.magnitudeMin < SleepDebt.onTargetBandMin {
-                parts.append(String(localized:
-                    "Sleep has been steady. Keep the rhythm going."))
+                sleep = driftingLater
+                    ? String(localized: "Sleep is holding up, but your bedtime keeps sliding later. Worth pulling back before it bites.")
+                    : String(localized: "Sleep has been steady. Keep the rhythm going.")
             } else if ledger.isDebt {
                 let debt = ledger.magnitudeMin
                 if debt <= Self.smallDebtMin {
-                    parts.append(String(localized:
-                        "You're a touch short on sleep. One early night sorts it."))
+                    sleep = String(localized:
+                        "You're a touch short on sleep. One early night sorts it.")
                     tonight = needMin + debt
                 } else if debt <= Self.planDebtMin {
-                    parts.append(String(localized:
-                        "You're running short on sleep. Earlier nights bring it back, and a nap counts too."))
+                    sleep = driftingLater
+                        ? String(localized: "You're short on sleep and your bedtime keeps sliding later. Pull it back this week.")
+                        : String(localized: "You're running short on sleep. Earlier nights bring it back, and a nap counts too.")
                     tonight = needMin + Self.catchUpMin
                 } else {
-                    parts.append(String(localized:
-                        "Sleep debt has piled up. Keep bedtimes earlier this week, and a nap helps too."))
+                    sleep = driftingLater
+                        ? String(localized: "Sleep debt has piled up and bedtime keeps sliding later. Pull it back, a nap helps too.")
+                        : String(localized: "Sleep debt has piled up. Keep bedtimes earlier this week, and a nap helps too.")
                     tonight = needMin + Self.catchUpMin
                 }
             } else {
-                parts.append(String(localized:
-                    "You're ahead on sleep, and it shows."))
+                sleep = String(localized:
+                    "You're ahead on sleep, and it shows.")
             }
         }
 
@@ -1265,7 +1278,7 @@ private struct LedgerTodayModel {
             tonightText = String(localized: "\u{2248} \(CoupledView.hoursMinutes(capped)) asleep")
         }
 
-        return CoachAdvice(message: parts.joined(separator: " "), tonight: tonightText)
+        return CoachAdvice(effort: effort, sleep: sleep, tonight: tonightText)
     }
 
     // MARK: Formatting helpers
@@ -1433,5 +1446,41 @@ private struct LedgerTodayHealthAlert: View {
                 .padding(.horizontal, Ledger.pageMargin)
                 .padding(.top, Ledger.sectionGap)
         }
+    }
+}
+
+// MARK: - The coach note leaf
+
+/// Renders the COACH note, letting the illness watch OVERRIDE the effort verdict: when the
+/// early-warning state is raised, "green light" would be exactly wrong, so the effort sentence is
+/// replaced with the watch's own and the note turns caution. The sleep sentence and the TONIGHT
+/// target stay, because an early night is the right advice either way.
+///
+/// A LEAF observer of `AppModel` (which owns `illnessSignal`), so the live object stays out of the
+/// screen root per the perf contract — the same isolation `LedgerBodyWatchingNote` uses.
+private struct LedgerTodayCoachNote: View {
+    @EnvironmentObject private var appModel: AppModel
+
+    let effort: String?
+    let sleep: String?
+    let tonight: String?
+
+    private var illnessRaised: Bool {
+        guard let signal = appModel.illnessSignal else { return false }
+        return signal.level != .quiet
+    }
+
+    var body: some View {
+        let effortText = illnessRaised
+            ? String(localized: "Your signals look strained today, so treat it as a rest day. The Body tab has the details.")
+            : effort
+        let message = [effortText, sleep].compactMap { $0 }.joined(separator: " ")
+
+        LedgerCoachNote(title: String(localized: "COACH"),
+                        message: message,
+                        accent: illnessRaised ? Ledger.accentCaution : Ledger.accentRecovery,
+                        action: tonight.map {
+                            .init(label: String(localized: "Tonight"), value: $0)
+                        })
     }
 }
