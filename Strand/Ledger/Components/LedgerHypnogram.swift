@@ -69,8 +69,15 @@ public struct LedgerHypnogram: View {
     private static let laneCentres: [CGFloat] = [22, 60, 98, 136]
     /// `height="10"` on every stage `<rect>`.
     private static let barHeight: CGFloat = 10
-    /// `rx="5"`.
-    private static let barRadius: CGFloat = Ledger.barRadius
+    /// The segment corner radius. The board's SVG says `rx="5"` (a full capsule), but the STAGES
+    /// ledger right below draws its bars at `Ledger.barRadiusTight` (3) — and the two read as one
+    /// system only when their corners agree, so the tighter shared token wins over the board here.
+    private static let barRadius: CGFloat = Ledger.barRadiusTight
+    /// Transition risers — the quiet vertical hairlines that trace the staircase between
+    /// consecutive stage levels, mirroring `StrandDesign.Hypnogram.risers` (stroke and opacity
+    /// verbatim) so the two hypnogram styles describe transitions the same way.
+    private static let riserWidth: CGFloat = 1.5
+    private static let riserOpacity: Double = 0.35
     /// The lane labels — `font-size="9"`.
     private static let laneLabelSize: CGFloat = 9
     /// The band the sleeping-HR path occupies, top and bottom.
@@ -195,9 +202,15 @@ public struct LedgerHypnogram: View {
     @ViewBuilder
     private func plot(plotWidth: CGFloat, progress: Double) -> some View {
         ZStack(alignment: .topLeading) {
+            // Drawn FIRST so every segment sits on top of its risers — the staircase is traced, the
+            // segments own the ink.
+            risers(plotWidth: plotWidth)
+
             ForEach(intervals) { interval in
                 let x = CGFloat(interval.start / span) * plotWidth
-                let w = max(Self.barHeight * scale,   // a capsule is never narrower than it is tall
+                // A segment is never narrower than its corner diameter, so a one-minute wake still
+                // reads as a rounded chip rather than a sliver.
+                let w = max(Self.barRadius * scale * 2,
                             CGFloat(interval.duration / span) * plotWidth)
                 RoundedRectangle(cornerRadius: Self.barRadius * scale, style: .continuous)
                     .fill(interval.stage.ledgerStage.color)
@@ -232,6 +245,28 @@ public struct LedgerHypnogram: View {
             Rectangle()
                 .frame(width: Self.labelColumn * scale + plotWidth * CGFloat(progress))
         }
+    }
+
+    /// WHOOP-style transition risers: a thin vertical hairline at each stage boundary, from the
+    /// outgoing lane's centre to the incoming one's — the staircase between levels. Stroke, width
+    /// and opacity mirror `StrandDesign.Hypnogram.risers` so both hypnogram styles trace
+    /// transitions identically. Consecutive intervals only: a data gap draws no riser, because a
+    /// line across a gap would claim a transition nobody measured.
+    private func risers(plotWidth: CGFloat) -> some View {
+        Path { p in
+            guard intervals.count >= 2 else { return }
+            for i in 0..<(intervals.count - 1) {
+                let a = intervals[i]
+                let b = intervals[i + 1]
+                guard a.stage.bandRank != b.stage.bandRank else { continue }
+                let x = Self.labelColumn * scale + CGFloat(b.start / span) * plotWidth
+                p.move(to: CGPoint(x: x, y: Self.laneCentres[a.stage.bandRank] * scale))
+                p.addLine(to: CGPoint(x: x, y: Self.laneCentres[b.stage.bandRank] * scale))
+            }
+        }
+        .stroke(Ledger.textTertiary.opacity(Self.riserOpacity),
+                style: StrokeStyle(lineWidth: Self.riserWidth,
+                                   lineCap: .round, lineJoin: .round))
     }
 
     /// The three clock labels: onset (left), midpoint (centred), wake (right).
