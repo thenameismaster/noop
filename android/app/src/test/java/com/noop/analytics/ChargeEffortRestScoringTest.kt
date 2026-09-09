@@ -14,7 +14,7 @@ import org.junit.Test
  *  - Effort (StrainScorer) now maps TRIMP onto 0–100 (maxStrain 21→100, D=7201 unchanged).
  *  - Charge (RecoveryScorer) folds in a symmetric skin-temp penalty (wHRV 0.60→0.55,
  *    wSkinTemp 0.05); the no-skin-temp path is byte-identical to the old model.
- *  - Rest (RestScorer) composite: duration 0.50 + efficiency 0.20 + restorative 0.20 +
+ *  - Rest (RestScorer) composite: duration 0.55 + banded efficiency 0.15 + restorative 0.20 +
  *    consistency 0.10, stored under the sleep_performance key (0–100).
  *  - ScoreConfidence tiers (calibrating / building / solid).
  *
@@ -198,8 +198,8 @@ class ChargeEffortRestScoringTest {
 
     @Test
     fun rest_weightConstants() {
-        assertEquals(0.50, RestScorer.wDuration, 0.0)
-        assertEquals(0.20, RestScorer.wEfficiency, 0.0)
+        assertEquals(0.55, RestScorer.wDuration, 0.0)
+        assertEquals(0.15, RestScorer.wEfficiency, 0.0)
         assertEquals(0.20, RestScorer.wRestorative, 0.0)
         assertEquals(0.10, RestScorer.wConsistency, 0.0)
         assertEquals(8.0, RestScorer.defaultSleepNeedHours, 0.0)
@@ -213,16 +213,17 @@ class ChargeEffortRestScoringTest {
 
     @Test
     fun rest_compositeWithoutConsistencyUsesNeutral() {
-        // 8h asleep (dur 100), eff 0.92 (92), deep 1.5h + REM 2h = 3.5h restorative,
-        // share 0.4375 / 0.50 → 87.5. No consistency → NEUTRAL 50 at full weight (Swift parity: the
-        // term is NOT dropped/renormalized). Weights 0.50/0.20/0.20/0.10 sum to 1.0.
+        // 8h asleep (dur 100), eff 0.92 → banded (0.92-0.80)/0.15 = 0.8 (80), deep 1.5h + REM 2h
+        // = 3.5h restorative, share 0.4375 / 0.50 → 87.5. No consistency → NEUTRAL 50 at full
+        // weight (Swift parity: the term is NOT dropped/renormalized). Weights 0.55/0.15/0.20/0.10
+        // sum to 1.0.
         val score = RestScorer.rest(
             asleepSeconds = 8 * 3600.0,
             efficiency = 0.92,
             deepSeconds = 1.5 * 3600.0,
             remSeconds = 2.0 * 3600.0,
         )!!
-        val expected = 100.0 * 0.50 + 92.0 * 0.20 + 87.5 * 0.20 + 50.0 * 0.10
+        val expected = 100.0 * 0.55 + 80.0 * 0.15 + 87.5 * 0.20 + 50.0 * 0.10
         assertEquals(expected, score, EPS)
     }
 
@@ -235,13 +236,14 @@ class ChargeEffortRestScoringTest {
             remSeconds = 2.0 * 3600.0,
             consistency = 0.80,
         )!!
-        val expected = (100.0 * 0.50 + 92.0 * 0.20 + 87.5 * 0.20 + 80.0 * 0.10) / 1.0
+        val expected = (100.0 * 0.55 + 80.0 * 0.15 + 87.5 * 0.20 + 80.0 * 0.10) / 1.0
         assertEquals(expected, score, EPS)
     }
 
     @Test
     fun rest_durationDominatesShortNight() {
-        // 4h asleep against the 8h default → duration 50; eff 0.95 (95); restorative share 0.5 → 100.
+        // 4h asleep against the 8h default → duration 50; eff 0.95 → banded full credit (100);
+        // restorative share 0.5 → 100.
         // No consistency → neutral 50 at full weight (Swift parity). Weights sum to 1.0.
         val score = RestScorer.rest(
             asleepSeconds = 4 * 3600.0,
@@ -249,7 +251,7 @@ class ChargeEffortRestScoringTest {
             deepSeconds = 1.0 * 3600.0,
             remSeconds = 1.0 * 3600.0,
         )!!
-        val expected = 50.0 * 0.50 + 95.0 * 0.20 + 100.0 * 0.20 + 50.0 * 0.10
+        val expected = 50.0 * 0.55 + 100.0 * 0.15 + 100.0 * 0.20 + 50.0 * 0.10
         assertEquals(expected, score, EPS)
     }
 

@@ -112,7 +112,9 @@ extension AnalyticsEngine.Rest {
 
         let needSeconds = max(needHours, 0.1) * 3600.0
         let durationScore = clamp01(tstSeconds / needSeconds)
-        let efficiencyScore = clamp01(efficiency)
+        // Banded, mirroring `composite` — see `efficiencyFloor`'s comment there.
+        let efficiencyScore = clamp01((efficiency - efficiencyFloor)
+                                      / (efficiencyFullCredit - efficiencyFloor))
         let deepFactor: Double = {
             guard let deep = deepSeconds, tstSeconds > 0, deepShareTarget > 0 else { return 1.0 }
             let adequacy = clamp01((deep / tstSeconds) / deepShareTarget)

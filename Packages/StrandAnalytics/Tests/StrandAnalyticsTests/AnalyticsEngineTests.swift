@@ -379,12 +379,13 @@ final class AnalyticsEngineTests: XCTestCase {
     }
 
     func testRestCompositeDurationDominatedAndClamped() {
-        // Duration term alone: 8 h asleep vs 8 h need → 1.0 × 0.50 weight = 50, all other
-        // sub-scores 0. Confirms the 0.50 duration weight and that over-need clamps at 1.0.
+        // Duration term alone: 8 h asleep vs 8 h need → 1.0 × 0.55 weight = 55, all other
+        // sub-scores 0 (0% efficiency sits below the banded floor). Confirms the 0.55 duration
+        // weight and that over-need clamps at 1.0.
         let r = AnalyticsEngine.Rest.composite(
             tstSeconds: 8 * 3600, inBedSeconds: 99_999, efficiency: 0.0,
             restorativeSeconds: 0.0, needHours: 8.0, consistency: 0.0)
-        XCTAssertEqual(r, 50.0, accuracy: 1e-9)
+        XCTAssertEqual(r, 55.0, accuracy: 1e-9)
         // Sleeping well over need does not push duration past 1.0.
         let over = AnalyticsEngine.Rest.composite(
             tstSeconds: 12 * 3600, inBedSeconds: 12 * 3600, efficiency: 1.0,
@@ -401,7 +402,7 @@ final class AnalyticsEngineTests: XCTestCase {
             tstSeconds: 4 * 3600, inBedSeconds: 5 * 3600, efficiency: 0.8,
             restorativeSeconds: 1 * 3600, needHours: 8.0, consistency: 0.5)
         XCTAssertEqual(withNil, withHalf, accuracy: 1e-9)
-        XCTAssertEqual(withNil, 56.0, accuracy: 1e-9)
+        XCTAssertEqual(withNil, 42.5, accuracy: 1e-9)
     }
 
     func testAnalyzeDayPopulatesRestAndConfidence() {

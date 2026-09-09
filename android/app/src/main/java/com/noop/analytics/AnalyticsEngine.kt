@@ -1318,7 +1318,7 @@ object AnalyticsEngine {
  * Faithful Kotlin mirror of the Swift Rest composite (AnalyticsEngine / RestScorer). Keep every
  * constant and the weight set byte-identical to Swift — parity tests enforce it.
  *
- *   Rest = 0.50·duration + 0.20·efficiency + 0.20·restorative + 0.10·consistency
+ *   Rest = 0.55·duration + 0.15·banded efficiency + 0.20·restorative + 0.10·consistency
  *
  * Each sub-component is itself on 0–100:
  *   duration     — asleep hours / personal need, clamped at 100 (8 h default, refined by recent avg).
@@ -1332,10 +1332,20 @@ object AnalyticsEngine {
 object RestScorer {
 
     /** Component weights (sum 1.0 when all present). Byte-identical to Swift. */
-    const val wDuration: Double = 0.50
-    const val wEfficiency: Double = 0.20
+    const val wDuration: Double = 0.55
+    const val wEfficiency: Double = 0.15
     const val wRestorative: Double = 0.20
     const val wConsistency: Double = 0.10
+
+    /**
+     * Efficiency is scored against a realistic band, not absolutely. Strap-detected sleep is
+     * inherently 90..98% efficient (in-bed is inferred from sleep), which made the raw value
+     * nearly free points and floored the composite near 40 before duration counted. Rescaled,
+     * 95%+ earns full credit and 80% earns none. Byte-identical to Swift
+     * `Rest.efficiencyFloor` / `Rest.efficiencyFullCredit`.
+     */
+    const val efficiencyFloor: Double = 0.80
+    const val efficiencyFullCredit: Double = 0.95
 
     /** Default personal sleep need (hours) before any recent-average refinement. */
     const val defaultSleepNeedHours: Double = 8.0
@@ -1437,8 +1447,9 @@ object RestScorer {
 
         // Duration vs personal need (clamped at 100 — sleeping past need does not over-credit).
         val durationScore = min(100.0, asleepHours / needHours * 100.0)
-        // Efficiency (0..1 → 0..100), clamped.
-        val efficiencyScore = (efficiency * 100.0).coerceIn(0.0, 100.0)
+        // Efficiency, banded (see efficiencyFloor) then scaled 0..100, clamped.
+        val efficiencyScore = ((efficiency - efficiencyFloor) / (efficiencyFullCredit - efficiencyFloor) * 100.0)
+            .coerceIn(0.0, 100.0)
         // Restorative share vs healthy target (clamped at 100), then scaled by a gentle deep-adequacy
         // factor in [deepFloorFactor, 1]: full once deep ≥ target share, ramping to the floor as
         // deep → 0, so a near-zero-deep night loses up to half this term (~10 pts) — honest, not
@@ -1520,7 +1531,8 @@ object RestScorer {
         fun r2(x: Double) = Math.round(x * 100.0) / 100.0
         val needSeconds = maxOf(needHours, 0.1) * 3600.0
         val durationScore = clamp01(tstSeconds / needSeconds)
-        val efficiencyScore = clamp01(efficiency)
+        // Banded, mirroring rest() — see efficiencyFloor.
+        val efficiencyScore = clamp01((efficiency - efficiencyFloor) / (efficiencyFullCredit - efficiencyFloor))
         val deepFactor = if (deepSeconds != null && tstSeconds > 0 && deepShareTarget > 0) {
             val adequacy = clamp01((deepSeconds / tstSeconds) / deepShareTarget)
             deepFloorFactor + (1.0 - deepFloorFactor) * adequacy

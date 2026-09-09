@@ -83,8 +83,8 @@ public enum AnalyticsEngine {
         /// Day strain / "Effort" [0,100] or nil (insufficient HR samples / invalid HRR).
         public let strain: Double?
         /// Rest composite [0,100] or nil (no asleep time). This is the value the
-        /// `sleep_performance` metric key carries (duration-vs-need 0.50 + efficiency
-        /// 0.20 + restorative share 0.20 + consistency 0.10). The downstream metric-series
+        /// `sleep_performance` metric key carries (duration-vs-need 0.55 + banded efficiency
+        /// 0.15 + restorative share 0.20 + consistency 0.10). The downstream metric-series
         /// builder reads it from here; the Charge "Rest quality" term reads it ÷100.
         public let restScore: Double?
         /// Per-score confidence tiers (Charge / Effort / Rest) for the small label under
@@ -573,8 +573,8 @@ public enum AnalyticsEngine {
 
         // ── Rest composite (Charge/Effort/Rest) ───────────────────────────────
         // The 0–100 sleep score the `sleep_performance` metric key now carries:
-        //   duration-vs-personal-need 0.50 + efficiency 0.20 + restorative share 0.20
-        //   + consistency 0.10. nil when there is no asleep time. The Charge "Rest
+        //   duration-vs-personal-need 0.55 + banded efficiency 0.15 + restorative share
+        //   0.20 + consistency 0.10. nil when there is no asleep time. The Charge "Rest
         //   quality" term reads it ÷100 (replacing raw efficiency).
         let hasStagedSleep = (deepS + remS) > 0
         let restScore: Double? = tstS <= 0 ? nil : Rest.composite(
@@ -1006,10 +1006,21 @@ public enum AnalyticsEngine {
         /// Neutral consistency when the caller supplies no regularity signal.
         public static let neutralConsistency: Double = 0.5
 
-        public static let wDuration: Double = 0.50
-        public static let wEfficiency: Double = 0.20
+        public static let wDuration: Double = 0.55
+        public static let wEfficiency: Double = 0.15
         public static let wRestorative: Double = 0.20
         public static let wConsistency: Double = 0.10
+
+        /// Efficiency is scored against a realistic band, not absolutely. Strap-DETECTED sleep is
+        /// inherently 90–98% efficient (in-bed is inferred from sleep, so the denominator can't
+        /// stray far from the numerator), which made the raw value ~19 of 20 free points and
+        /// floored the composite near 40 before duration counted: a 3-hour night scored ~55.
+        /// Rescaled, 95%+ earns full credit and 80% earns none — the clinical "normal" boundary —
+        /// so the term now separates genuinely fragmented nights from solid ones instead of paying
+        /// everyone. Duration absorbed the freed weight (0.50 → 0.55): time asleep vs need is the
+        /// one input every reference product scores first.
+        public static let efficiencyFloor: Double = 0.80
+        public static let efficiencyFullCredit: Double = 0.95
 
         /// Minimum trailing nights before a personal sleep-need estimate is trusted; below this the
         /// population default is used (cold-start honesty — never learn a need from a few nights).
@@ -1065,7 +1076,9 @@ public enum AnalyticsEngine {
 
             let needSeconds = max(needHours, 0.1) * 3600.0
             let durationScore = clamp01(tstSeconds / needSeconds)
-            let efficiencyScore = clamp01(efficiency)
+            // Banded, not absolute — see `efficiencyFloor`'s comment.
+            let efficiencyScore = clamp01((efficiency - efficiencyFloor)
+                                          / (efficiencyFullCredit - efficiencyFloor))
             // Deep-adequacy factor in [deepFloorFactor, 1]: 1.0 once deep ≥ target share, ramping
             // down to the floor as deep → 0. nil deep (unknown split) ⇒ 1.0 (no adjustment).
             let deepFactor: Double = {
