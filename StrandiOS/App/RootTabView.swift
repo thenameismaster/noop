@@ -249,6 +249,11 @@ struct RootTabView: View {
         NavigationStack(path: path) {
             view
                 .background(Ledger.bgScreen.ignoresSafeArea())
+                // Restores the left-edge swipe-back that hiding the navigation bar (below) turns
+                // off. The Ledger's pushed screens draw their own "‹ Trends" back link, but the
+                // EDGE GESTURE is the way iOS hands actually go back, and UIKit disables its
+                // recognizer whenever the bar is hidden. See `LedgerBackSwipeEnabler`.
+                .background(LedgerBackSwipeEnabler())
                 .toolbar(.hidden, for: .navigationBar)
                 .toolbar(.hidden, for: .tabBar)
                 .tabRouteDestinations()
@@ -1004,6 +1009,45 @@ private struct QuickActionSheet: View {
             .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
+    }
+}
+
+/// Re-arms `UINavigationController`'s interactive pop (the left-edge swipe-back) inside a
+/// `NavigationStack` whose navigation bar is hidden — UIKit disables the recognizer with the bar,
+/// which left the Ledger's pushed screens reachable but only backable via their "‹" link.
+///
+/// Installed as a zero-size `background` on each Ledger tab's ROOT view, so it lives exactly as
+/// long as that tab's stack and finds its `navigationController` through the responder chain. It
+/// takes over as the recognizer's delegate and allows the gesture ONLY while something is pushed:
+/// the classic footgun with the bare `delegate = nil` re-enable is that an edge swipe at the ROOT
+/// begins a pop with nowhere to go and freezes the navigation controller — `viewControllers.count
+/// > 1` is the guard that keeps the root's day-swipe (and sanity) intact.
+private struct LedgerBackSwipeEnabler: UIViewControllerRepresentable {
+    func makeUIViewController(context: Context) -> Proxy { Proxy() }
+    func updateUIViewController(_ controller: Proxy, context: Context) {}
+
+    final class Proxy: UIViewController, UIGestureRecognizerDelegate {
+        override func didMove(toParent parent: UIViewController?) {
+            super.didMove(toParent: parent)
+            arm()
+        }
+
+        override func viewDidAppear(_ animated: Bool) {
+            super.viewDidAppear(animated)
+            // The navigation controller may not be reachable yet in `didMove` on first layout;
+            // re-arming here is idempotent and catches that case.
+            arm()
+        }
+
+        private func arm() {
+            guard let recognizer = navigationController?.interactivePopGestureRecognizer else { return }
+            recognizer.delegate = self
+            recognizer.isEnabled = true
+        }
+
+        func gestureRecognizerShouldBegin(_ gestureRecognizer: UIGestureRecognizer) -> Bool {
+            (navigationController?.viewControllers.count ?? 0) > 1
+        }
     }
 }
 
