@@ -1796,7 +1796,7 @@ struct SettingsView: View {
     /// Ledger UI — the "Athlete's Ledger" redesign. Additive and default OFF, exactly like Aurora, and
     /// it TAKES PRECEDENCE over Aurora when both are on (the shells read the same rule). Same key the
     /// iOS tab shell (`RootTabView`) and the macOS shell (`RootView`) read.
-    @AppStorage(LedgerFlags.ledgerUIEnabledKey) private var ledgerUIEnabled = false
+    @AppStorage(LedgerFlags.ledgerUIEnabledKey) private var ledgerUIEnabled = true
     private var ledgerUICard: some View {
         SettingsSection(
             icon: "chart.line.uptrend.xyaxis",

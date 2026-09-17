@@ -397,7 +397,7 @@ public extension Ledger {
 /// can never drift on a typo. Mirrors how `noop.auroraUIEnabled` is used in `RootView.swift`.
 ///
 /// ```swift
-/// @AppStorage(LedgerFlags.ledgerUIEnabledKey) private var ledgerUIEnabled = false
+/// @AppStorage(LedgerFlags.ledgerUIEnabledKey) private var ledgerUIEnabled = true
 /// ```
 public enum LedgerFlags {
     /// `"noop.ledgerUIEnabled"` — the cross-platform key string. Byte-identical everywhere.

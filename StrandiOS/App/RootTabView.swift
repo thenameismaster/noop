@@ -62,11 +62,12 @@ struct RootTabView: View {
     /// SettingsView toggle and the macOS shell (`RootView`).
     @AppStorage("noop.auroraUIEnabled") private var auroraUIEnabled = false
 
-    /// Ledger UI — the "Athlete's Ledger" redesign (`design_handoff_noop_redesign`). Like Aurora it is
-    /// ADDITIVE and toggle-gated, default OFF, so the shipped experience is byte-for-byte unchanged
-    /// unless the user opts in from Settings. It takes PRECEDENCE over Aurora when both are on, because
-    /// it is the newer fork; the key is shared with `SettingsView` and the macOS shell (`RootView`).
-    @AppStorage(LedgerFlags.ledgerUIEnabledKey) private var ledgerUIEnabled = false
+    /// Ledger UI — the "Athlete's Ledger" redesign (`design_handoff_noop_redesign`). Additive and
+    /// toggle-gated like Aurora, and since this fork adopted the Ledger as ITS shipped experience the
+    /// default is ON — a fresh install opens straight into it, and the Settings toggle remains the
+    /// way back to the classic shell. It takes PRECEDENCE over Aurora when both are on, because it is
+    /// the newer fork; the key is shared with `SettingsView` and the macOS shell (`RootView`).
+    @AppStorage(LedgerFlags.ledgerUIEnabledKey) private var ledgerUIEnabled = true
 
     /// The navigation path for the Ledger shell's "…" overflow sheet. The Ledger shell has no More
     /// TAB, so the More hub is presented as a sheet and needs a stack of its own — it cannot borrow a
